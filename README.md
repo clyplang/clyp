@@ -2,7 +2,7 @@
 
 Clyp is an experimental programming language that transpiles to Python. It's designed with a clean and simple syntax, aiming to make coding more straightforward and readable.
 
-*Site at [codesoft.is-a.dev/clyp](https://codesoft.is-a.dev/clyp)*
+*Site at [codesoft.is-a.dev/clyp/](https://codesoft.is-a.dev/clyp/)*
 
 ## Features
 
