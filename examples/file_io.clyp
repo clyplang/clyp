@@ -1,0 +1,16 @@
+# examples/file_io.clyp
+# Demonstrates file input and output operations using the standard library.
+
+str file_path = "clyp_example.txt";
+str content = "Hello from Clyp!\nThis is a test file created by a Clyp script.";
+
+# Write content to a file.
+print("Writing to " + file_path + "...");
+write_file(file_path, content);
+print("Write complete.");
+
+# Read the content back from the file.
+print("Reading from " + file_path + "...");
+str read_content = read_file(file_path);
+print("File content:");
+print(read_content);

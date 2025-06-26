@@ -1,0 +1,15 @@
+# examples/hello_world.clyp
+# A simple "Hello, World!" program in Clyp.
+# It demonstrates variable declaration, function definition, and printing to the console.
+
+str name = "World";
+print("Hello, " + name + "!");
+
+# Define a function to greet someone.
+# It takes a string argument and returns a new string.
+function greet(str person) returns str {
+    return "Greetings, " + person + "!";
+};
+
+# Call the function and print the result.
+print(greet("Clyp Developer"));

@@ -1,0 +1,40 @@
+# examples/advanced_features.clyp
+# Showcasing classes, conditionals, and the pipeline operator.
+
+class Counter {
+    int count = 0;
+
+    function increment(self) returns null {
+        self.count = self.count + 1;
+    };
+
+    function get_count(self) returns int {
+        return self.count;
+    };
+};
+
+let c = Counter();
+c.increment();
+c.increment();
+print("Count is: " + toString(c.get_count()));
+
+# Conditional logic with 'unless'
+unless c.get_count() > 5 {
+    print("Count is not greater than 5.");
+};
+
+# Pipeline operator example
+function double(int n) returns int {
+    return n * 2;
+};
+
+function add_five(int n) returns int {
+    return n + 5;
+};
+
+let initial_value = 10;
+# The pipeline passes the value on the left to the function on the right.
+let final_value = initial_value |> double |> add_five;
+# Expected: double(10) -> 20, then add_five(20) -> 25
+
+print("Pipeline result: " + toString(final_value));
