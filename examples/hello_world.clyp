@@ -12,4 +12,4 @@ function greet(str person) returns str {
 };
 
 # Call the function and print the result.
-print(greet "Clyp Developer");
+print(greet("Clyp Developer"));

@@ -12,6 +12,24 @@ def main():
     
     args = parser.parse_args()
 
+    def get_clyp_line_for_py(py_line, line_map, clyp_lines):
+        if not line_map or not clyp_lines:
+            return '?', ''
+        # Find the closest previous mapped line
+        mapped_lines = sorted(line_map.keys())
+        prev = None
+        for ml in mapped_lines:
+            if ml > py_line:
+                break
+            prev = ml
+        if prev is not None:
+            clyp_line = line_map[prev]
+            if 0 <= clyp_line-1 < len(clyp_lines):
+                return clyp_line, clyp_lines[clyp_line-1]
+            elif clyp_lines:
+                return len(clyp_lines), clyp_lines[-1]
+        return '?', ''
+
     if args.version:
         print(f"{__version__}")
     elif args.file:
@@ -21,16 +39,18 @@ def main():
                 clyp_code = f.read()
         except (IOError, UnicodeDecodeError) as e:
             print(f"Error reading file {args.file}: {e}", file=sys.stderr)
-            return
+            sys.exit(1)
         except FileNotFoundError:
             print(f"File {args.file} not found.", file=sys.stderr)
+            sys.exit(1)
         except Exception as e:
             print(f"Unexpected error reading file {args.file}: {e}", file=sys.stderr)
+            sys.exit(1)
         try:
             result = parse_clyp(clyp_code, file_path, return_line_map=True)
         except Exception as e:
-            print(e)
-            return
+            print(f"{type(e).__name__}: {e}", file=sys.stderr)
+            sys.exit(1)
         if isinstance(result, tuple):
             python_code, line_map, clyp_lines = result
         else:
@@ -39,28 +59,29 @@ def main():
             clyp_lines = None
         try:
             exec(python_code, {'__name__': '__main__', '__file__': file_path})
+        except SyntaxError as e:
+            py_line = e.lineno
+            print("\nTraceback (most recent call last):", file=sys.stderr)
+            clyp_line, code = get_clyp_line_for_py(py_line, line_map, clyp_lines)
+            print(f"  File '{args.file}', line {clyp_line}", file=sys.stderr)
+            print(f"    {code}", file=sys.stderr)
+            print(f"(Python error at transpiled line {py_line})", file=sys.stderr)
+            print(f"{type(e).__name__}: {e}", file=sys.stderr)
+            sys.exit(1)
         except Exception as e:
             tb = traceback.extract_tb(sys.exc_info()[2])
             print("\nTraceback (most recent call last):", file=sys.stderr)
             for frame in tb:
                 if frame.filename == '<string>':
                     py_line = frame.lineno
-                    if line_map and py_line in line_map:
-                        clyp_line = line_map[py_line]
-                        if clyp_lines and clyp_line-1 >= 0 and clyp_line-1 < len(clyp_lines):
-                            code = clyp_lines[clyp_line-1]
-                        else:
-                            code = ''
-                        print(f"  File '{args.file}', line {clyp_line}", file=sys.stderr)
-                        print(f"    {code}", file=sys.stderr)
-                    else:
-                        print(f"  File '{args.file}', line ?", file=sys.stderr)
+                    clyp_line, code = get_clyp_line_for_py(py_line, line_map, clyp_lines)
+                    print(f"  File '{args.file}', line {clyp_line}", file=sys.stderr)
+                    print(f"    {code}", file=sys.stderr)
                 else:
                     print(f"  File '{frame.filename}', line {frame.lineno}", file=sys.stderr)
                     print(f"    {frame.line}", file=sys.stderr)
             print(f"{type(e).__name__}: {e}", file=sys.stderr)
-        except Exception as e:
-            print(f"Error processing file {args.file}: {e}\n\n Warning: These errors come from the transpiled Python code and will likely not provide helpful information.", file=sys.stderr)
+            sys.exit(1)
     else:
         print(f"clyp version {__version__}, Python version {sys.version}")
 
