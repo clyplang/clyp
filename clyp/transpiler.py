@@ -3,6 +3,7 @@
 
 import os
 import sys
+import pathlib
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -59,8 +60,50 @@ def _replace_keywords_outside_strings(line: str) -> str:
         parts[i] = part
     return "".join(parts)
 
+def _is_clyp_package(path: str) -> bool:
+    """Check if the given path is inside a Clyp package (has __init__.clyp in its folder or parent folders)."""
+    p = pathlib.Path(path).resolve()
+    if p.is_file():
+        p = p.parent
+    for parent in [p] + list(p.parents):
+        if (parent / "__init__.clyp").exists():
+            return True
+    return False
+
+def _resolve_clyp_module_path(module_name: str, base_dir: pathlib.Path) -> Optional[pathlib.Path]:
+    """
+    Given a dotted module name and a base directory, resolve to a .clyp file or a package __init__.clyp.
+    Returns the path if found and valid, else None.
+    """
+    # Try as a single file
+    candidate = base_dir / (module_name.replace('.', os.sep) + ".clyp")
+    if candidate.exists():
+        return candidate
+    # Try as a package (__init__.clyp)
+    pkg_dir = base_dir / module_name.replace('.', os.sep)
+    init_file = pkg_dir / "__init__.clyp"
+    if init_file.exists():
+        # Check all parent folders up to base_dir have __init__.clyp
+        parts = module_name.split('.')
+        check_dir = base_dir
+        for part in parts:
+            check_dir = check_dir / part
+            if not (check_dir / "__init__.clyp").exists():
+                return None
+        return init_file
+    return None
+
 @typeguard.typechecked
 def parse_clyp(clyp_code: str, file_path: Optional[str] = None) -> str:
+    python_keywords = set([
+        'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue',
+        'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import',
+        'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield',
+        # Built-in types
+        'int', 'float', 'str', 'list', 'dict', 'set', 'tuple', 'bool', 'object', 'bytes', 'complex', 'type',
+        # Other built-ins
+        'print', 'input', 'len', 'open', 'range', 'map', 'filter', 'zip', 'min', 'max', 'sum', 'any', 'all', 'abs',
+    ])
     indentation_level: int = 0
     indentation_sign: str = "    "
     stdlib_names = [
@@ -133,7 +176,14 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None) -> str:
             parts = stripped_line.split()
             if len(parts) == 3:
                 module_name = parts[2]
-                processed_import_lines.append(f"{module_name} = clyp_import('{module_name}', {repr(file_path)})")
+                module_path = None
+                if file_path:
+                    base_dir = pathlib.Path(file_path).parent
+                    module_path = _resolve_clyp_module_path(module_name, base_dir)
+                if module_path is not None:
+                    processed_import_lines.append(f"{module_name} = clyp_import('{module_name}', {repr(file_path)})")
+                else:
+                    raise ClypSyntaxError(f"Cannot import module '{module_name}': not a Clyp package or single-file script.")
             else:
                 raise ClypSyntaxError(f"Invalid clyp import statement: {stripped_line}")
         elif stripped_line.startswith("clyp from "):
@@ -141,11 +191,17 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None) -> str:
             if match:
                 module_name, imports_str = match.groups()
                 imported_names = [name.strip() for name in imports_str.split(',')]
-                
-                processed_import_lines.append(f"_temp_module = clyp_import('{module_name}', {repr(file_path)})")
-                for name in imported_names:
-                    processed_import_lines.append(f"{name} = _temp_module.{name}")
-                processed_import_lines.append("del _temp_module")
+                module_path = None
+                if file_path:
+                    base_dir = pathlib.Path(file_path).parent
+                    module_path = _resolve_clyp_module_path(module_name, base_dir)
+                if module_path is not None:
+                    processed_import_lines.append(f"_temp_module = clyp_import('{module_name}', {repr(file_path)})")
+                    for name in imported_names:
+                        processed_import_lines.append(f"{name} = _temp_module.{name}")
+                    processed_import_lines.append("del _temp_module")
+                else:
+                    raise ClypSyntaxError(f"Cannot import module '{module_name}': not a Clyp package or single-file script.")
             else:
                 raise ClypSyntaxError(f"Invalid clyp from import statement: {stripped_line}")
         else:
@@ -200,6 +256,9 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None) -> str:
             match = re.match(r"^\s*(?:([a-zA-Z_][\w\.\[\]]*)\s+)?([a-zA-Z_]\w*)\s*=(.*)", line)
             if match:
                 var_type, var_name, rest_of_line = match.groups()
+                # Check for reserved keyword assignment
+                if var_name in python_keywords:
+                    raise ClypSyntaxError(f"Cannot assign to reserved keyword or built-in name: '{var_name}'")
                 if var_type:
                     # Reconstruct the line in Python's type-hint format
                     line = f"{var_name.strip()}: {var_type.strip()} = {rest_of_line.strip()}"
