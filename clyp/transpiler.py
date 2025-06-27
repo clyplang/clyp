@@ -71,23 +71,6 @@ def _replace_keywords_outside_strings(line: str) -> str:
         parts[i] = part
     return "".join(parts)
 
-def _is_clyp_package(path: str) -> bool:
-    """
-    Determine whether the specified path is within a Clyp package.
-    
-    A Clyp package is identified by the presence of an `__init__.clyp` file in the directory or any of its parent directories.
-    
-    Returns:
-        bool: True if the path is inside a Clyp package, otherwise False.
-    """
-    p = pathlib.Path(path).resolve()
-    if p.is_file():
-        p = p.parent
-    for parent in [p] + list(p.parents):
-        if (parent / "__init__.clyp").exists():
-            return True
-    return False
-
 def _resolve_clyp_module_path(module_name: str, base_dir: pathlib.Path) -> Optional[pathlib.Path]:
     """
     Resolves a dotted Clyp module name to a valid `.clyp` file or package `__init__.clyp` within the specified base directory.

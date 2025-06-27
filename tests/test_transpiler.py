@@ -110,10 +110,6 @@ def test_pipeline_operator_with_args():
     parsed_code = parse_clyp(clyp_code)
     assert 'save(transform(clean(data), "fast"))' in parsed_code
 
-import tempfile
-import shutil
-import os
-
 def test_import_clyp_package(tmp_path):
     # Create a package structure: pkg/__init__.clyp, pkg/mod.clyp
     """
@@ -284,5 +280,5 @@ def test_invalid_var_declaration():
     Tests that an invalid variable declaration without a variable name raises an exception during Clyp code parsing.
     """
     clyp_code = 'int = 5'
-    with pytest.raises(Exception):
+    with pytest.raises(ClypSyntaxError):
         parse_clyp(clyp_code)
