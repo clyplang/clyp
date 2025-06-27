@@ -36,7 +36,10 @@ def main():
                         py_line = frame.lineno
                         if line_map and py_line in line_map:
                             clyp_line = line_map[py_line]
-                            code = clyp_lines[clyp_line-1] if clyp_lines and clyp_line-1 < len(clyp_lines) else ''
+                            if clyp_lines and clyp_line-1 >= 0 and clyp_line-1 < len(clyp_lines):
+                                code = clyp_lines[clyp_line-1]
+                            else:
+                                code = ''
                             print(f"  File '{args.file}', line {clyp_line}", file=sys.stderr)
                             print(f"    {code}", file=sys.stderr)
                         else:
