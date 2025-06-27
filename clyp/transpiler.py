@@ -110,7 +110,7 @@ def _resolve_clyp_module_path(
 
 
 @typeguard.typechecked
-def parse_clyp(clyp_code: str, file_path: Optional[str] = None) -> str:
+def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map: bool = False):
     """
     Transpiles Clyp source code into equivalent Python code.
 
@@ -311,8 +311,29 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None) -> str:
     infile_str_raw = re.sub(r"{(\s|#[^\n]*)*}", "{\n    pass\n}", infile_str_raw)
 
     infile_str_indented: str = ""
-    line: str
-    for line in infile_str_raw.split("\n"):
+    line_map = {}  # python line number (1-based) -> clyp line number (1-based)
+    clyp_lines = clyp_code.splitlines()
+    # Check for missing semicolons at the end of statements
+    for idx, line in enumerate(clyp_lines):
+        stripped = line.strip()
+        # Ignore empty lines, comments, block starts/ends, and import lines
+        # Skip empty lines, comments, block delimiters, and import statements
+        is_empty_or_comment = not stripped or stripped.startswith('#')
+        is_block_delimiter = stripped.endswith('{') or stripped == '}'
+        is_import_statement = stripped.startswith('clyp import') or stripped.startswith('clyp from')
+        
+        if is_empty_or_comment or is_block_delimiter or is_import_statement:
+            continue
+        # Ignore lines that are only whitespace or block headers
+        if re.match(r'^(def |function |if |elif |for |while |class |try|except|finally|with|repeat )', stripped) or stripped in ('else:', 'finally:'):
+            continue
+        # If the line is not a block header and does not end with a semicolon, raise error
+        if not stripped.endswith(';'):
+            raise ClypSyntaxError(f"Missing semicolon at end of statement on line {idx+1}: {line}")
+    py_line_num = python_code.count('\n') + 1  # start after header
+    for idx, line in enumerate(infile_str_raw.split("\n")):
+        clyp_line_num = idx + 1
+
         line = _process_pipeline_operator(line)
         m: Optional[Match[str]] = re.search(r"[ \t]*(#.*$)", line)
 
@@ -478,9 +499,13 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None) -> str:
             line = indented_line
 
         infile_str_indented += line + add_comment + "\n"
+        line_map[py_line_num] = clyp_line_num
+        py_line_num += 1
 
     infile_str_indented = re.sub(r"else\s+if", "elif", infile_str_indented)
     infile_str_indented = re.sub(r";\n", "\n", infile_str_indented)
 
     python_code += infile_str_indented
+    if return_line_map:
+        return python_code, line_map, clyp_lines
     return python_code

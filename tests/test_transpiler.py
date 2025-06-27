@@ -108,19 +108,19 @@ def test_is_is_not_syntax():
 
 
 def test_unless_syntax():
-    clyp_code = "unless (a > b) {}"
+    clyp_code = "unless (a > b) {};"
     parsed_code = parse_clyp(clyp_code)
     assert "if not (a > b):" in parsed_code
 
 
 def test_pipeline_operator():
-    clyp_code = "data |> clean |> transform |> save"
+    clyp_code = "data |> clean |> transform |> save;"
     parsed_code = parse_clyp(clyp_code)
     assert "save(transform(clean(data)))" in parsed_code
 
 
 def test_pipeline_operator_with_assignment():
-    clyp_code = "let result = data |> clean |> transform"
+    clyp_code = "let result = data |> clean |> transform;"
     parsed_code = parse_clyp(clyp_code)
     assert "result = transform(clean(data))" in parsed_code
 
