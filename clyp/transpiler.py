@@ -110,7 +110,7 @@ def _resolve_clyp_module_path(
 
 
 @typeguard.typechecked
-def parse_clyp(clyp_code: str, file_path: Optional[str] = None) -> str:
+def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map: bool = False):
     """
     Transpiles Clyp source code into equivalent Python code.
 
