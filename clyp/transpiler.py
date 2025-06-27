@@ -51,6 +51,17 @@ def _process_pipeline_operator(line: str) -> str:
         return _process_pipeline_chain(line)
 
 def _replace_keywords_outside_strings(line: str) -> str:
+    """
+    Replaces specific Clyp keywords with Python equivalents outside of string literals in a line of code.
+    
+    Replaces 'unless' with 'if not', 'is not' with '!=', and 'is' with '==' only in code segments, leaving string literals unchanged.
+    
+    Parameters:
+        line (str): The input line of code to process.
+    
+    Returns:
+        str: The line with Clyp keywords replaced outside of strings.
+    """
     parts = re.split(r'(".*?"|\'.*?\')', line)
     for i in range(0, len(parts), 2):
         part = parts[i]
@@ -61,7 +72,14 @@ def _replace_keywords_outside_strings(line: str) -> str:
     return "".join(parts)
 
 def _is_clyp_package(path: str) -> bool:
-    """Check if the given path is inside a Clyp package (has __init__.clyp in its folder or parent folders)."""
+    """
+    Determine whether the specified path is within a Clyp package.
+    
+    A Clyp package is identified by the presence of an `__init__.clyp` file in the directory or any of its parent directories.
+    
+    Returns:
+        bool: True if the path is inside a Clyp package, otherwise False.
+    """
     p = pathlib.Path(path).resolve()
     if p.is_file():
         p = p.parent
@@ -72,8 +90,16 @@ def _is_clyp_package(path: str) -> bool:
 
 def _resolve_clyp_module_path(module_name: str, base_dir: pathlib.Path) -> Optional[pathlib.Path]:
     """
-    Given a dotted module name and a base directory, resolve to a .clyp file or a package __init__.clyp.
-    Returns the path if found and valid, else None.
+    Resolves a dotted Clyp module name to a valid `.clyp` file or package `__init__.clyp` within the specified base directory.
+    
+    Attempts to locate the module as either a single `.clyp` file or as a package directory containing an `__init__.clyp` file, verifying that all parent directories up to the base directory are valid Clyp packages.
+    
+    Parameters:
+        module_name (str): The dotted name of the Clyp module to resolve.
+        base_dir (pathlib.Path): The base directory from which to resolve the module path.
+    
+    Returns:
+        Optional[pathlib.Path]: The resolved path to the `.clyp` file or package `__init__.clyp` if found and valid, otherwise `None`.
     """
     # Try as a single file
     candidate = base_dir / (module_name.replace('.', os.sep) + ".clyp")
@@ -95,6 +121,18 @@ def _resolve_clyp_module_path(module_name: str, base_dir: pathlib.Path) -> Optio
 
 @typeguard.typechecked
 def parse_clyp(clyp_code: str, file_path: Optional[str] = None) -> str:
+    """
+    Transpiles Clyp source code into equivalent Python code.
+    
+    This function parses Clyp language syntax, handling constructs such as imports, type annotations, function definitions, pipeline operators, control flow, and indentation. It validates Clyp import statements, enforces correct usage of reserved Python keywords, and ensures syntactic correctness by transforming Clyp-specific features into valid Python code. Errors are raised for invalid imports, reserved keyword assignments, or malformed function definitions.
+    
+    Parameters:
+        clyp_code (str): The source code written in the Clyp language to be transpiled.
+        file_path (Optional[str]): The file path of the Clyp source, used for resolving relative imports.
+    
+    Returns:
+        str: The transpiled Python code as a string.
+    """
     python_keywords = set([
         'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue',
         'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import',
