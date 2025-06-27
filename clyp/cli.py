@@ -71,15 +71,27 @@ def main():
         except Exception as e:
             tb = traceback.extract_tb(sys.exc_info()[2])
             print("\nTraceback (most recent call last):", file=sys.stderr)
-            for frame in tb:
+            # Find all Clyp frames
+            clyp_frame_indices = [idx for idx, frame in enumerate(tb) if frame.filename == '<string>']
+            last_clyp_frame_idx = clyp_frame_indices[-1] if clyp_frame_indices else None
+            for idx, frame in enumerate(tb):
                 if frame.filename == '<string>':
                     py_line = frame.lineno
                     clyp_line, code = get_clyp_line_for_py(py_line, line_map, clyp_lines)
-                    print(f"  File '{args.file}', line {clyp_line}", file=sys.stderr)
-                    print(f"    {code}", file=sys.stderr)
+                    marker = '>>>' if idx == last_clyp_frame_idx else '   '
+                    print(f"{marker} File '{args.file}', line {clyp_line}", file=sys.stderr)
+                    # Show a few lines of Clyp context for each frame
+                    if clyp_lines and clyp_line != '?':
+                        start = max(0, clyp_line-3)
+                        end = min(len(clyp_lines), clyp_line+2)
+                        for i in range(start, end):
+                            pointer = '->' if (i+1) == clyp_line else '  '
+                            print(f"{pointer} {i+1}: {clyp_lines[i]}", file=sys.stderr)
+                    else:
+                        print(f"    {code}", file=sys.stderr)
                 else:
-                    print(f"  File '{frame.filename}', line {frame.lineno}", file=sys.stderr)
-                    print(f"    {frame.line}", file=sys.stderr)
+                    print(f"    File '{frame.filename}', line {frame.lineno}", file=sys.stderr)
+                    print(f"      {frame.line}", file=sys.stderr)
             print(f"{type(e).__name__}: {e}", file=sys.stderr)
             sys.exit(1)
     else:
