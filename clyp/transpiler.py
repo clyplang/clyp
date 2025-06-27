@@ -162,10 +162,15 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
     for idx, line in enumerate(clyp_lines):
         stripped = line.strip()
         # Ignore empty lines, comments, block starts/ends, and import lines
-        if not stripped or stripped.startswith('#') or stripped.endswith('{') or stripped == '}' or stripped.startswith('clyp import') or stripped.startswith('clyp from'):
+        # Skip empty lines, comments, block delimiters, and import statements
+        is_empty_or_comment = not stripped or stripped.startswith('#')
+        is_block_delimiter = stripped.endswith('{') or stripped == '}'
+        is_import_statement = stripped.startswith('clyp import') or stripped.startswith('clyp from')
+        
+        if is_empty_or_comment or is_block_delimiter or is_import_statement:
             continue
         # Ignore lines that are only whitespace or block headers
-        if re.match(r'^(def |function |if |for |while |class |elif |else|except|try|finally|with|repeat )', stripped):
+        if re.match(r'^(def |function |if |elif |for |while |class |try|except|finally|with|repeat )', stripped) or stripped in ('else:', 'finally:'):
             continue
         # If the line is not a block header and does not end with a semicolon, raise error
         if not stripped.endswith(';'):
