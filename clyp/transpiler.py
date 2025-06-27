@@ -173,7 +173,6 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
     py_line_num = python_code.count('\n') + 1  # start after header
     for idx, line in enumerate(infile_str_raw.split("\n")):
         clyp_line_num = idx + 1
-        orig_py_line_num = py_line_num
 
         line = _process_pipeline_operator(line)
         m: Optional[Match[str]] = re.search(r"[ \t]*(#.*$)", line)
