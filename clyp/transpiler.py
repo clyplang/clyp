@@ -76,36 +76,57 @@ def _replace_keywords_outside_strings(line: str) -> str:
 
 
 def _resolve_clyp_module_path(
-    module_name: str, base_dir: pathlib.Path
+    module_name: str, base_dir: pathlib.Path, script_path: Optional[str] = None
 ) -> Optional[pathlib.Path]:
     """
-    Resolves a dotted Clyp module name to a valid `.clyp` file or package `__init__.clyp` within the specified base directory.
+    Resolves a dotted Clyp module name to a valid `.clyp` file or package `__init__.clyp` within the specified base directory or clypPackages folder.
 
     Attempts to locate the module as either a single `.clyp` file or as a package directory containing an `__init__.clyp` file, verifying that all parent directories up to the base directory are valid Clyp packages.
+    Also supports a `clypPackages` folder next to the script or wheel install location.
 
     Parameters:
         module_name (str): The dotted name of the Clyp module to resolve.
         base_dir (pathlib.Path): The base directory from which to resolve the module path.
+        script_path (Optional[str]): The path to the current script (for clypPackages lookup).
 
     Returns:
         Optional[pathlib.Path]: The resolved path to the `.clyp` file or package `__init__.clyp` if found and valid, otherwise `None`.
     """
-    # Try as a single file
-    candidate = base_dir / (module_name.replace(".", os.sep) + ".clyp")
-    if candidate.exists():
-        return candidate
-    # Try as a package (__init__.clyp)
-    pkg_dir = base_dir / module_name.replace(".", os.sep)
-    init_file = pkg_dir / "__init__.clyp"
-    if init_file.exists():
-        # Check all parent folders up to base_dir have __init__.clyp
-        parts = module_name.split(".")
-        check_dir = base_dir
-        for part in parts:
-            check_dir = check_dir / part
-            if not (check_dir / "__init__.clyp").exists():
-                return None
-        return init_file
+    search_dirs = [base_dir]
+    # Add clypPackages next to the script, if available
+    if script_path:
+        script_dir = pathlib.Path(script_path).parent
+        clyp_packages_dir = script_dir / "clypPackages"
+        if clyp_packages_dir.exists() and clyp_packages_dir.is_dir():
+            search_dirs.insert(0, clyp_packages_dir)
+    # Add clypPackages next to the installed wheel, if available
+    try:
+        import clyp
+
+        wheel_dir = pathlib.Path(clyp.__file__).parent.parent
+        wheel_clyp_packages = wheel_dir / "clypPackages"
+        if wheel_clyp_packages.exists() and wheel_clyp_packages.is_dir():
+            search_dirs.append(wheel_clyp_packages)
+    except Exception:
+        pass
+    for search_dir in search_dirs:
+        # Try as a single file
+        candidate = search_dir / (module_name.replace(".", os.sep) + ".clyp")
+        if candidate.exists():
+            return candidate
+        # Try as a package (__init__.clyp)
+        pkg_dir = search_dir / module_name.replace(".", os.sep)
+        init_file = pkg_dir / "__init__.clyp"
+        if init_file.exists():
+            # Check all parent folders up to search_dir have __init__.clyp
+            parts = module_name.split(".")
+            check_dir = search_dir
+            for part in parts:
+                check_dir = check_dir / part
+                if not (check_dir / "__init__.clyp").exists():
+                    break
+            else:
+                return init_file
     return None
 
 
@@ -268,7 +289,7 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
                 module_path = None
                 if file_path:
                     base_dir = pathlib.Path(file_path).parent
-                    module_path = _resolve_clyp_module_path(module_name, base_dir)
+                    module_path = _resolve_clyp_module_path(module_name, base_dir, file_path)
                 if module_path is not None:
                     processed_import_lines.append(
                         f"{module_name} = clyp_import('{module_name}', {repr(file_path)})"
@@ -287,7 +308,7 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
                 module_path = None
                 if file_path:
                     base_dir = pathlib.Path(file_path).parent
-                    module_path = _resolve_clyp_module_path(module_name, base_dir)
+                    module_path = _resolve_clyp_module_path(module_name, base_dir, file_path)
                 if module_path is not None:
                     processed_import_lines.append(
                         f"_temp_module = clyp_import('{module_name}', {repr(file_path)})"
