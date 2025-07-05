@@ -34,7 +34,7 @@ The Clyp CLI allows you to execute `.clyp` files directly from your terminal.
 - **Run a file**:
 
   ```bash
-  clyp path/to/your/file.clyp
+  clyp go path/to/your/file.clyp
   ```
 
 - **Check the version**:
