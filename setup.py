@@ -61,7 +61,7 @@ setup(
     install_requires=get_requirements(),
     license="MIT",
     description="Clyp is a programming language that transpiles to Python.",
-    url="https://codesoft.is-a.dev/clyp",
+    url="https://codesoft.is-a.dev/clyp/",
     project_urls={
         "Source": "https://github.com/clyplang/clyp",
     },
