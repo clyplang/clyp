@@ -129,7 +129,7 @@ def test_pipeline_operator_with_args():
     """
     Tests that the pipeline operator with function arguments in Clyp code is correctly transpiled into nested Python function calls.
     """
-    clyp_code = 'data |> clean |> transform("fast") |> save'
+    clyp_code = 'data |> clean |> transform("fast") |> save;'
     parsed_code = parse_clyp(clyp_code)
     assert 'save(transform(clean(data), "fast"))' in parsed_code
 
@@ -218,7 +218,7 @@ def test_comment_inside_string():
     """
     Tests that comments inside string literals are not treated as comments, while actual comments are preserved during transpilation.
     """
-    clyp_code = 'print("Hello # not a comment") # real comment'
+    clyp_code = 'print("Hello # not a comment"); # real comment'
     parsed_code = parse_clyp(clyp_code)
     assert 'print("Hello # not a comment")' in parsed_code
     assert "# real comment" in parsed_code
@@ -239,7 +239,7 @@ def test_var_declaration_without_assignment():
     """
     Tests that a variable declaration without assignment in Clyp is transpiled to a Python type annotation.
     """
-    clyp_code = "int y"
+    clyp_code = "int y;"
     parsed_code = parse_clyp(clyp_code)
     assert "y: int" in parsed_code
 

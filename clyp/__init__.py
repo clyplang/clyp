@@ -4,4 +4,4 @@
 __all__ = ['__version__']
 
 
-__version__ = "0.3.0" # Instead of fancy classes, we'll just use a string for simplicity
+__version__ = "1.0.0" # Instead of fancy classes, we'll just use a string for simplicity

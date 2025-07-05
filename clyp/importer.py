@@ -1,8 +1,85 @@
-import sys
 import os
+import pathlib
+import sys
 import importlib.util
-from clyp.transpiler import parse_clyp
+import zipfile
+import tempfile
+import json
+import shutil
+import atexit
 from typing import Optional
+from . import __version__
+from .transpiler import parse_clyp
+
+_loaded_clb_modules = {}
+_temp_dirs = []
+
+def cleanup_clb_temps():
+    for temp_dir in _temp_dirs:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    _temp_dirs.clear()
+
+atexit.register(cleanup_clb_temps)
+
+def clyp_include(clb_path: str, calling_file: str):
+    """
+    Loads a .clb file, checks for compatibility, and imports the module.
+    """
+    base_dir = pathlib.Path(calling_file).parent
+    clb_file_path = base_dir / clb_path
+    
+    if not clb_file_path.exists():
+        raise FileNotFoundError(f"CLB file not found: {clb_file_path}")
+
+    clb_abs_path = str(clb_file_path.resolve())
+    if clb_abs_path in _loaded_clb_modules:
+        return _loaded_clb_modules[clb_abs_path]
+
+    temp_dir = tempfile.mkdtemp()
+    _temp_dirs.append(temp_dir)
+
+    try:
+        with zipfile.ZipFile(clb_file_path, 'r') as zf:
+            zf.extract('metadata.json', temp_dir)
+            with open(pathlib.Path(temp_dir) / 'metadata.json', 'r') as f:
+                metadata = json.load(f)
+
+            if metadata.get('clyp_version') != __version__:
+                print(
+                    f"Warning: Clyp version mismatch. File was built with {metadata.get('clyp_version')}, running {__version__}.",
+                    file=sys.stderr
+                )
+            if metadata.get('platform') != sys.platform:
+                print(
+                    f"Warning: Platform mismatch. File was built for {metadata.get('platform')}, running on {sys.platform}.",
+                    file=sys.stderr
+                )
+
+            module_filename = metadata['module_filename']
+            zf.extract(module_filename, temp_dir)
+            
+            module_path = pathlib.Path(temp_dir) / module_filename
+            module_name = module_path.stem.split('.')[0]
+
+            sys.path.insert(0, temp_dir)
+            
+            spec = importlib.util.find_spec(module_name)
+            if spec is None:
+                raise ImportError(f"Could not find compiled module spec in {clb_path}")
+            
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            
+            _loaded_clb_modules[clb_abs_path] = module
+            # Make the module available globally
+            globals()[module_name] = module
+            return module
+
+    except Exception as e:
+        shutil.rmtree(temp_dir)
+        if temp_dir in _temp_dirs:
+            _temp_dirs.remove(temp_dir)
+        raise ImportError(f"Failed to load CLB file {clb_path}: {e}")
 
 def clyp_import(module_name: str, current_file_path: Optional[str] = None) -> object:
     """
@@ -49,3 +126,18 @@ def clyp_import(module_name: str, current_file_path: Optional[str] = None) -> ob
     exec(python_code, module.__dict__)
     
     return module
+
+def find_clyp_imports(file_path: str):
+    """
+    Parses a .clyp file and returns a list of imported modules.
+    """
+    with open(file_path, 'r', encoding='utf-8') as f:
+        clyp_code = f.read()
+
+    imports = []
+    for line in clyp_code.split('\n'):
+        if line.strip().startswith('import '):
+            parts = line.strip().split()
+            if len(parts) > 1:
+                imports.append(parts[1])
+    return imports

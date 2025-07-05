@@ -54,7 +54,7 @@ long_description = Path('README.md').read_text(encoding='utf-8')
 print(f"Using requirements: {get_requirements()}")
 setup(
     name='clyp',
-    version='0.3.0',
+    version='1.0.0',
     author='CodeSoft',
     packages=['clyp'],
     install_requires=get_requirements(),
@@ -62,7 +62,7 @@ setup(
     description='Clyp is a programming language that transpiles to Python.',
     url='https://codesoft.is-a.dev/clyp',
     project_urls={
-        'Source': 'https://github.com/CodeSoftGit/clyp',
+        'Source': 'https://github.com/clyplang/clyp',
     },
     entry_points={
         'console_scripts': [

@@ -223,7 +223,7 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
     python_code: str = (
         "from typeguard import install_import_hook; install_import_hook()\n"
         "import clyp\n"
-        "from clyp.importer import clyp_import\n"
+        "from clyp.importer import clyp_import, clyp_include\n"
         f"from clyp.stdlib import {', '.join(stdlib_names)}\n"
         "del clyp\n"
         "true = True; false = False; null = None\n"
@@ -324,6 +324,13 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
                 raise ClypSyntaxError(
                     f"Invalid clyp from import statement: {stripped_line}"
                 )
+        elif stripped_line.startswith("include "):
+            match = re.match(r'include\s+"([^"]+\.clb)"', stripped_line)
+            if match:
+                clb_path = match.group(1)
+                processed_import_lines.append(f'clyp_include(r"{clb_path}", r"{file_path}")')
+            else:
+                raise ClypSyntaxError(f"Invalid include statement: {stripped_line}")
         else:
             processed_import_lines.append(line)
     infile_str_raw = "\n".join(processed_import_lines)
@@ -335,22 +342,22 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
     line_map = {}  # python line number (1-based) -> clyp line number (1-based)
     clyp_lines = clyp_code.splitlines()
     # Check for missing semicolons at the end of statements
-    for idx, line in enumerate(clyp_lines):
-        stripped = line.strip()
-        # Ignore empty lines, comments, block starts/ends, and import lines
-        # Skip empty lines, comments, block delimiters, and import statements
-        is_empty_or_comment = not stripped or stripped.startswith('#')
-        is_block_delimiter = stripped.endswith('{') or stripped == '}'
-        is_import_statement = stripped.startswith('clyp import') or stripped.startswith('clyp from')
-        
-        if is_empty_or_comment or is_block_delimiter or is_import_statement:
-            continue
-        # Ignore lines that are only whitespace or block headers
-        if re.match(r'^(def |function |if |elif |for |while |class |try|except|finally|with|repeat )', stripped) or stripped in ('else:', 'finally:'):
-            continue
-        # If the line is not a block header and does not end with a semicolon, raise error
-        if not stripped.endswith(';'):
-            raise ClypSyntaxError(f"Missing semicolon at end of statement on line {idx+1}: {line}")
+    # for idx, line in enumerate(clyp_lines):
+    #     stripped = line.strip()
+    #     # Ignore empty lines, comments, block starts/ends, and import lines
+    #     # Skip empty lines, comments, block delimiters, and import statements
+    #     is_empty_or_comment = not stripped or stripped.startswith('#')
+    #     is_block_delimiter = stripped.endswith('{') or stripped == '}'
+    #     is_import_statement = stripped.startswith('clyp import') or stripped.startswith('clyp from')
+    #     
+    #     if is_empty_or_comment or is_block_delimiter or is_import_statement:
+    #         continue
+    #     # Ignore lines that are only whitespace or block headers
+    #     if re.match(r'^(def |function |if |elif |for |while |class |try|except|finally|with|repeat )', stripped) or stripped in ('else:', 'finally:'):
+    #         continue
+    #     # If the line is not a block header and does not end with a semicolon, raise error
+    #     if not stripped.endswith(';'):
+    #         raise ClypSyntaxError(f"Missing semicolon at end of statement on line {idx+1}: {line}")
     py_line_num = python_code.count('\n') + 1  # start after header
     for idx, line in enumerate(infile_str_raw.split("\n")):
         clyp_line_num = idx + 1
