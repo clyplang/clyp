@@ -91,10 +91,13 @@ def slugify(text: str) -> str:
     :return: A slugified version of the input string.
     """
     text = text.strip().lower()
-    text = re.sub(r'\s+', '-', text)
-    text = re.sub(r'[^a-z0-9-]', '', text)
-    text = re.sub(r'-+', '-', text)  # Replace multiple consecutive dashes with a single dash
-    return text.strip('-')  # Remove leading and trailing dashes
+    text = re.sub(r"\s+", "-", text)
+    text = re.sub(r"[^a-z0-9-]", "", text)
+    text = re.sub(
+        r"-+", "-", text
+    )  # Replace multiple consecutive dashes with a single dash
+    return text.strip("-")  # Remove leading and trailing dashes
+
 
 @typechecked
 def toString(value: Any) -> str:
@@ -130,7 +133,7 @@ def write_file(file_path: str, content: str, *args: Any, **kwargs: Any) -> None:
     :raises RuntimeError: If the file cannot be written.
     """
     try:
-        with open(file_path, 'w', *args, **kwargs) as file:
+        with open(file_path, "w", *args, **kwargs) as file:
             file.write(content)
     except IOError as e:
         raise ClypRuntimeError(f"Failed to write to file {file_path}: {e}") from e
@@ -209,26 +212,17 @@ def to_roman_numerals(num: int) -> str:
     if not (1 <= num <= 3999):
         raise ClypRuntimeError("Number must be between 1 and 3999")
 
-    val = [
-        1000, 900, 500, 400,
-        100, 90, 50, 40,
-        10, 9, 5, 4,
-        1
-    ]
-    syms = [
-        "M", "CM", "D", "CD",
-        "C", "XC", "L", "XL",
-        "X", "IX", "V", "IV",
-        "I"
-    ]
-    
+    val = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+    syms = ["M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"]
+
     roman_numeral = ""
     for i in range(len(val)):
         while num >= val[i]:
             roman_numeral += syms[i]
             num -= val[i]
-    
+
     return roman_numeral
+
 
 @typechecked
 def chance(percentage: Any) -> bool:
@@ -240,18 +234,22 @@ def chance(percentage: Any) -> bool:
     :raises ValueError: If the percentage is not valid.
     """
     if isinstance(percentage, str):
-        if percentage.endswith('%'):
+        if percentage.endswith("%"):
             percentage = percentage[:-1]
         try:
             percentage = float(percentage)
         except ValueError:
-            raise ValueError("Invalid percentage format. Must be a number or a string like '25%'.")
+            raise ValueError(
+                "Invalid percentage format. Must be a number or a string like '25%'."
+            )
 
     if not (0 <= percentage <= 100):
         raise ValueError("Percentage must be between 0 and 100")
-    
+
     import random
+
     return random.random() < (percentage / 100)
+
 
 @typechecked
 def duration(seconds: int) -> Callable[[Callable[[], None]], None]:
@@ -266,19 +264,21 @@ def duration(seconds: int) -> Callable[[Callable[[], None]], None]:
 
     def wrapper(func: Callable[[], None]) -> None:
         import time
+
         start_time = time.time()
         while time.time() - start_time < seconds:
             func()
 
     return wrapper
 
+
 @typechecked
 def retry_with_cooldown(
-    function: Callable[..., Any], 
-    retries: int = 3, 
-    cooldown: int = 1, 
-    *args: Any, 
-    **kwargs: Any
+    function: Callable[..., Any],
+    retries: int = 3,
+    cooldown: int = 1,
+    *args: Any,
+    **kwargs: Any,
 ) -> Any:
     """
     Retry a function with a specified number of retries and cooldown period.
@@ -311,11 +311,10 @@ def retry_with_cooldown(
                     f"Function failed after {retries} attempts: {last_exception}"
                 ) from last_exception
 
+
 @typechecked
 def throttle(
-    function: Callable[..., Any],
-    limit: int = 1,
-    period: int = 1
+    function: Callable[..., Any], limit: int = 1, period: int = 1
 ) -> Callable[..., Any]:
     """
     Throttle a function to limit its execution rate.
@@ -348,6 +347,7 @@ def throttle(
 
     return wrapper
 
+
 @typechecked
 def flatten(list_of_lists: List[List[Any]]) -> List[Any]:
     """
@@ -357,6 +357,7 @@ def flatten(list_of_lists: List[List[Any]]) -> List[Any]:
     :return: A flattened list containing all elements.
     """
     return [item for sublist in list_of_lists for item in sublist]
+
 
 def chunk(items: List[Any], size: int) -> List[List[Any]]:
     """
@@ -371,7 +372,8 @@ def chunk(items: List[Any], size: int) -> List[List[Any]]:
     if not isinstance(size, int) or size <= 0:
         raise ValueError("Size must be a positive integer")
 
-    return [items[i:i + size] for i in range(0, len(items), size)]
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
 
 def benchmark(func: Callable[[], Any], iterations: int = 1000) -> float:
     """
@@ -395,8 +397,11 @@ def benchmark(func: Callable[[], Any], iterations: int = 1000) -> float:
 
     return (end_time - start_time) / iterations
 
+
 @typechecked
-def cache(ttl: Union[int, str, float]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def cache(
+    ttl: Union[int, str, float],
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Cache the result of a function for a specified time-to-live (TTL).
 
@@ -408,14 +413,31 @@ def cache(ttl: Union[int, str, float]) -> Callable[[Callable[..., Any]], Callabl
 
     if isinstance(ttl, str):
         units = {
-            's': 1, 'sec': 1, 'secs': 1, 'seconds': 1,
-            'm': 60, 'min': 60, 'mins': 60, 'minutes': 60,
-            'h': 3600, 'hr': 3600, 'hrs': 3600, 'hours': 3600,
-            'd': 86400, 'day': 86400, 'days': 86400,
-            'w': 604800, 'wk': 604800, 'wks': 604800, 'weeks': 604800,
-            'y': 31536000, 'yr': 31536000, 'yrs': 31536000, 'years': 31536000
+            "s": 1,
+            "sec": 1,
+            "secs": 1,
+            "seconds": 1,
+            "m": 60,
+            "min": 60,
+            "mins": 60,
+            "minutes": 60,
+            "h": 3600,
+            "hr": 3600,
+            "hrs": 3600,
+            "hours": 3600,
+            "d": 86400,
+            "day": 86400,
+            "days": 86400,
+            "w": 604800,
+            "wk": 604800,
+            "wks": 604800,
+            "weeks": 604800,
+            "y": 31536000,
+            "yr": 31536000,
+            "yrs": 31536000,
+            "years": 31536000,
         }
-        match = re.match(r'^(\d+(?:\.\d+)?)\s*(\w+)$', ttl.strip())
+        match = re.match(r"^(\d+(?:\.\d+)?)\s*(\w+)$", ttl.strip())
         if match:
             value, unit = match.groups()
             if unit in units:
@@ -447,6 +469,7 @@ def cache(ttl: Union[int, str, float]) -> Callable[[Callable[..., Any]], Callabl
 
     return decorator
 
+
 @typechecked
 def trace(func: Callable[..., Any]) -> Callable[..., Any]:
     """
@@ -466,6 +489,7 @@ def trace(func: Callable[..., Any]) -> Callable[..., Any]:
 
     return wrapper
 
+
 @typechecked
 def ping(host: str, timeout: int = 1) -> Union[float, bool]:
     """
@@ -482,14 +506,15 @@ def ping(host: str, timeout: int = 1) -> Union[float, bool]:
         output = subprocess.check_output(
             ["ping", "-c", "1", "-W", str(timeout), host],
             stderr=subprocess.STDOUT,
-            universal_newlines=True
+            universal_newlines=True,
         )
-        match = re.search(r'time=(\d+\.\d+) ms', output)
+        match = re.search(r"time=(\d+\.\d+) ms", output)
         if match:
             return float(match.group(1))
         return False
     except subprocess.CalledProcessError as e:
         raise ClypRuntimeError(f"Ping failed for {host}: {e.output}") from e
+
 
 @typechecked
 def random_choice_weighted(choices: List[Tuple[Any, float]]) -> Any:

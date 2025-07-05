@@ -131,7 +131,91 @@ def _resolve_clyp_module_path(
 
 
 @typeguard.typechecked
-def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map: bool = False):
+def transpile_to_clyp(python_code: str) -> str:
+    """
+    Transpiles Python source code into equivalent Clyp code.
+    """
+    lines = python_code.split("\n")
+    clyp_lines = []
+    indent_size = 0
+
+    # First pass to determine indent size
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped:
+            indentation = len(line) - len(stripped)
+            if indentation > 0:
+                indent_size = indentation
+                break
+
+    if indent_size == 0:
+        indent_size = 4  # default
+
+    indent_level = 0
+    for line in lines:
+        stripped = line.lstrip()
+
+        if not stripped:
+            clyp_lines.append("")
+            continue
+
+        indentation = len(line) - len(stripped)
+        new_indent_level = indentation // indent_size
+
+        if new_indent_level < indent_level:
+            for _ in range(indent_level - new_indent_level):
+                clyp_lines.append("}")
+
+        indent_level = new_indent_level
+
+        # Keyword replacements
+        line = re.sub(r"if not\b", "unless", stripped)
+        line = re.sub(r"!=", " is not", line)
+        line = re.sub(r"==", " is", line)
+        line = re.sub(r"elif", "else if", line)
+
+        # Function definition
+        func_match = re.match(r"def\s+([a-zA-Z_]\w*)\s*\((.*)\)\s*->\s*(.*):", line)
+        if func_match:
+            name, args_str, return_type = func_match.groups()
+            args = [a.strip() for a in args_str.split(",")]
+            new_args = []
+            for arg in args:
+                if ":" in arg:
+                    arg_name, arg_type = [p.strip() for p in arg.split(":")]
+                    new_args.append(f"{arg_type} {arg_name}")
+                else:
+                    new_args.append(arg)
+            line = f"function {name}({', '.join(new_args)}) returns {return_type} {{"
+
+        # Variable declaration
+        var_match = re.match(
+            r"([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_][\w\.\[\]]*)\s*=\s*(.*)", line
+        )
+        if var_match:
+            var_name, var_type, value = var_match.groups()
+            line = f"{var_type} {var_name} = {value};"
+        elif line.endswith(":"):
+            line = line[:-1] + " {"
+        elif not line.endswith(";"):
+            line += ";"
+
+        clyp_lines.append(line)
+
+    while indent_level > 0:
+        clyp_lines.append("}")
+        indent_level -= 1
+
+    return "\n".join(clyp_lines)
+
+
+@typeguard.typechecked
+def parse_clyp(
+    clyp_code: str,
+    file_path: Optional[str] = None,
+    return_line_map: bool = False,
+    target_lang: str = "python",
+):
     """
     Transpiles Clyp source code into equivalent Python code.
 
@@ -140,10 +224,15 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
     Parameters:
         clyp_code (str): The source code written in the Clyp language to be transpiled.
         file_path (Optional[str]): The file path of the Clyp source, used for resolving relative imports.
+        return_line_map (bool): If true, returns a map of python line numbers to clyp line numbers.
+        target_lang (str): The target language for transpilation, 'python' or 'clyp'.
 
     Returns:
         str: The transpiled Python code as a string.
     """
+    if target_lang == "clyp":
+        return transpile_to_clyp(clyp_code)
+
     python_keywords = set(
         [
             "False",
@@ -222,6 +311,9 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
     ]
     python_code: str = (
         "from typeguard import install_import_hook; install_import_hook()\n"
+        "import gc\n"
+        "gc.enable()\n"
+        "del gc\n"
         "import clyp\n"
         "from clyp.importer import clyp_import, clyp_include\n"
         f"from clyp.stdlib import {', '.join(stdlib_names)}\n"
@@ -289,7 +381,9 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
                 module_path = None
                 if file_path:
                     base_dir = pathlib.Path(file_path).parent
-                    module_path = _resolve_clyp_module_path(module_name, base_dir, file_path)
+                    module_path = _resolve_clyp_module_path(
+                        module_name, base_dir, file_path
+                    )
                 if module_path is not None:
                     processed_import_lines.append(
                         f"{module_name} = clyp_import('{module_name}', {repr(file_path)})"
@@ -308,7 +402,9 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
                 module_path = None
                 if file_path:
                     base_dir = pathlib.Path(file_path).parent
-                    module_path = _resolve_clyp_module_path(module_name, base_dir, file_path)
+                    module_path = _resolve_clyp_module_path(
+                        module_name, base_dir, file_path
+                    )
                 if module_path is not None:
                     processed_import_lines.append(
                         f"_temp_module = clyp_import('{module_name}', {repr(file_path)})"
@@ -328,7 +424,9 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
             match = re.match(r'include\s+"([^"]+\.clb)"', stripped_line)
             if match:
                 clb_path = match.group(1)
-                processed_import_lines.append(f'clyp_include(r"{clb_path}", r"{file_path}")')
+                processed_import_lines.append(
+                    f'clyp_include(r"{clb_path}", r"{file_path}")'
+                )
             else:
                 raise ClypSyntaxError(f"Invalid include statement: {stripped_line}")
         else:
@@ -349,7 +447,7 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
     #     is_empty_or_comment = not stripped or stripped.startswith('#')
     #     is_block_delimiter = stripped.endswith('{') or stripped == '}'
     #     is_import_statement = stripped.startswith('clyp import') or stripped.startswith('clyp from')
-    #     
+    #
     #     if is_empty_or_comment or is_block_delimiter or is_import_statement:
     #         continue
     #     # Ignore lines that are only whitespace or block headers
@@ -358,7 +456,7 @@ def parse_clyp(clyp_code: str, file_path: Optional[str] = None, return_line_map:
     #     # If the line is not a block header and does not end with a semicolon, raise error
     #     if not stripped.endswith(';'):
     #         raise ClypSyntaxError(f"Missing semicolon at end of statement on line {idx+1}: {line}")
-    py_line_num = python_code.count('\n') + 1  # start after header
+    py_line_num = python_code.count("\n") + 1  # start after header
     for idx, line in enumerate(infile_str_raw.split("\n")):
         clyp_line_num = idx + 1
 
