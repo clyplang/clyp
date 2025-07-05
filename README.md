@@ -22,7 +22,7 @@ pip install clyp
 Want to install from source? Clone the repository and run:
 
 ```bash
-git clone https://github.com/CodeSoftGit/clyp.git
+git clone https://github.com/clyplang/clyp.git
 cd clyp
 pip install -r requirements.txt
 ```
