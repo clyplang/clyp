@@ -1,6 +1,7 @@
 # Here we do the transpilation of the Clyp code to Python code!!!!! :3
 # Cool right? Well actually it is not that cool, but it's a start
 
+
 import os
 import sys
 import pathlib
@@ -130,83 +131,147 @@ def _resolve_clyp_module_path(
     return None
 
 
+
 @typeguard.typechecked
 def transpile_to_clyp(python_code: str) -> str:
     """
-    Transpiles Python source code into equivalent Clyp code.
+    Transpiles Python source code into equivalent Clyp code using AST.
     """
-    lines = python_code.split("\n")
-    clyp_lines = []
-    indent_size = 0
+    import ast
 
-    # First pass to determine indent size
-    for line in lines:
-        stripped = line.lstrip()
-        if stripped:
-            indentation = len(line) - len(stripped)
-            if indentation > 0:
-                indent_size = indentation
-                break
+    class ClypTranspiler(ast.NodeVisitor):
+        def __init__(self):
+            self.lines = []
+            self.indent = 0
 
-    if indent_size == 0:
-        indent_size = 4  # default
+        def emit(self, line: str = ""):
+            self.lines.append("    " * self.indent + line)
 
-    indent_level = 0
-    for line in lines:
-        stripped = line.lstrip()
+        def visit_Module(self, node):
+            for stmt in node.body:
+                self.visit(stmt)
 
-        if not stripped:
-            clyp_lines.append("")
-            continue
-
-        indentation = len(line) - len(stripped)
-        new_indent_level = indentation // indent_size
-
-        if new_indent_level < indent_level:
-            for _ in range(indent_level - new_indent_level):
-                clyp_lines.append("}")
-
-        indent_level = new_indent_level
-
-        # Keyword replacements
-        line = re.sub(r"if not\b", "unless", stripped)
-        line = re.sub(r"!=", " is not", line)
-        line = re.sub(r"==", " is", line)
-        line = re.sub(r"elif", "else if", line)
-
-        # Function definition
-        func_match = re.match(r"def\s+([a-zA-Z_]\w*)\s*\((.*)\)\s*->\s*(.*):", line)
-        if func_match:
-            name, args_str, return_type = func_match.groups()
-            args = [a.strip() for a in args_str.split(",")]
-            new_args = []
-            for arg in args:
-                if ":" in arg:
-                    arg_name, arg_type = [p.strip() for p in arg.split(":")]
-                    new_args.append(f"{arg_type} {arg_name}")
+        def visit_FunctionDef(self, node):
+            args = []
+            for arg in node.args.args:
+                arg_type = None
+                if arg.annotation:
+                    arg_type = ast.unparse(arg.annotation)
+                if arg_type:
+                    args.append(f"{arg_type} {arg.arg}")
                 else:
-                    new_args.append(arg)
-            line = f"function {name}({', '.join(new_args)}) returns {return_type} {{"
+                    args.append(arg.arg)
+            returns = ast.unparse(node.returns) if node.returns else "any"
+            self.emit(f"function {node.name}({', '.join(args)}) returns {returns} {{")
+            self.indent += 1
+            for stmt in node.body:
+                self.visit(stmt)
+            self.indent -= 1
+            self.emit("}")
 
-        # Variable declaration
-        var_match = re.match(
-            r"([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_][\w\.\[\]]*)\s*=\s*(.*)", line
-        )
-        if var_match:
-            var_name, var_type, value = var_match.groups()
-            line = f"{var_type} {var_name} = {value};"
-        elif line.endswith(":"):
-            line = line[:-1] + " {"
-        elif not line.endswith(";"):
-            line += ";"
+        def visit_Assign(self, node):
+            # Only handle simple assignments
+            if len(node.targets) == 1:
+                target = node.targets[0]
+                if isinstance(target, ast.Name):
+                    self.emit(f"{target.id} = {ast.unparse(node.value)};")
+                else:
+                    self.emit(f"{ast.unparse(target)} = {ast.unparse(node.value)};")
+            else:
+                self.emit(f"{', '.join([ast.unparse(t) for t in node.targets])} = {ast.unparse(node.value)};")
 
-        clyp_lines.append(line)
+        def visit_AnnAssign(self, node):
+            # Type-annotated assignment
+            target = node.target
+            if isinstance(target, ast.Name):
+                var_type = ast.unparse(node.annotation)
+                if node.value is not None:
+                    value = ast.unparse(node.value)
+                    self.emit(f"{var_type} {target.id} = {value};")
+                else:
+                    self.emit(f"{var_type} {target.id};")
+            else:
+                if node.value is not None:
+                    self.emit(f"{ast.unparse(target)}: {ast.unparse(node.annotation)} = {ast.unparse(node.value)};")
+                else:
+                    self.emit(f"{ast.unparse(target)}: {ast.unparse(node.annotation)};")
 
-    while indent_level > 0:
-        clyp_lines.append("}")
-        indent_level -= 1
+        def visit_If(self, node):
+            test = ast.unparse(node.test)
+            self.emit(f"if {test} {{")
+            self.indent += 1
+            for stmt in node.body:
+                self.visit(stmt)
+            self.indent -= 1
+            if node.orelse:
+                self.emit("else {")
+                self.indent += 1
+                for stmt in node.orelse:
+                    self.visit(stmt)
+                self.indent -= 1
+                self.emit("}")
+            else:
+                self.emit("}")
 
-    return "\n".join(clyp_lines)
+        def visit_For(self, node):
+            target = ast.unparse(node.target)
+            iter_ = ast.unparse(node.iter)
+            self.emit(f"for {target} in {iter_} {{")
+            self.indent += 1
+            for stmt in node.body:
+                self.visit(stmt)
+            self.indent -= 1
+            self.emit("}")
+
+        def visit_While(self, node):
+            test = ast.unparse(node.test)
+            self.emit(f"while {test} {{")
+            self.indent += 1
+            for stmt in node.body:
+                self.visit(stmt)
+            self.indent -= 1
+            self.emit("}")
+
+        def visit_Return(self, node):
+            value = ast.unparse(node.value) if node.value else ""
+            self.emit(f"return {value};")
+
+        def visit_Expr(self, node):
+            self.emit(f"{ast.unparse(node.value)};")
+
+        def visit_ClassDef(self, node):
+            self.emit(f"class {node.name} {{")
+            self.indent += 1
+            for stmt in node.body:
+                self.visit(stmt)
+            self.indent -= 1
+            self.emit("}")
+
+        def visit_Pass(self, node):
+            self.emit("pass;")
+
+        def visit_Break(self, node):
+            self.emit("break;")
+
+        def visit_Continue(self, node):
+            self.emit("continue;")
+
+        def visit_Import(self, node):
+            # Clyp does not support Python imports, skip or comment
+            self.emit(f"// import {', '.join([ast.unparse(alias) for alias in node.names])}")
+
+        def visit_ImportFrom(self, node):
+            self.emit(f"// from {node.module} import {', '.join([ast.unparse(alias) for alias in node.names])}")
+
+        def generic_visit(self, node):
+            # For nodes not explicitly handled
+            for child in ast.iter_child_nodes(node):
+                self.visit(child)
+
+    tree = ast.parse(python_code)
+    transpiler = ClypTranspiler()
+    transpiler.visit(tree)
+    return "\n".join(transpiler.lines)
 
 
 @typeguard.typechecked

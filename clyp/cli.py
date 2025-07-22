@@ -1,14 +1,8 @@
 import argparse
-from clyp import __version__
 import sys
-from clyp.transpiler import parse_clyp
-from clyp.formatter import format_clyp_code
 import os
 import traceback
-from setuptools import setup
-from Cython.Build import cythonize
 import shutil
-import importlib.util
 import importlib.machinery
 import json
 import platform
@@ -16,7 +10,12 @@ import zipfile
 import tempfile
 import glob
 import hashlib
-import concurrent.futures  # Added for parallel builds
+import concurrent.futures
+from setuptools import setup
+from Cython.Build import cythonize
+from clyp import __version__
+from clyp.transpiler import parse_clyp
+from clyp.formatter import format_clyp_code
 from .importer import find_clyp_imports
 
 
@@ -91,10 +90,11 @@ class Log:
 
     @classmethod
     def _print(cls, color, *args, **kwargs):
+        msg = "".join(map(str, args))
         if cls._supports_color:
-            print(color + "".join(map(str, args)) + cls.ENDC, **kwargs)
+            print(f"{color}{msg}{cls.ENDC}", **kwargs)
         else:
-            print("".join(map(str, args)), **kwargs)
+            print(msg, **kwargs)
 
     @classmethod
     def info(cls, *args, **kwargs):
@@ -114,10 +114,11 @@ class Log:
 
     @classmethod
     def bold(cls, *args, **kwargs):
+        msg = "".join(map(str, args))
         if cls._supports_color:
-            print(cls.BOLD + "".join(map(str, args)) + cls.ENDC, **kwargs)
+            print(f"{cls.BOLD}{msg}{cls.ENDC}", **kwargs)
         else:
-            print("".join(map(str, args)), **kwargs)
+            print(msg, **kwargs)
 
     @classmethod
     def traceback_header(cls, *args, **kwargs):
@@ -167,6 +168,8 @@ def build_module(file_path, project_root, cache_dir, force_rebuild=False, nthrea
             return None
 
         python_code = parse_clyp(clyp_code, file_path)
+        if isinstance(python_code, tuple):
+            python_code = python_code[0]
 
         original_cwd = os.getcwd()
         os.chdir(temp_dir)
@@ -474,7 +477,6 @@ def main():
     def get_clyp_line_for_py(py_line, line_map, clyp_lines):
         if not line_map or not clyp_lines:
             return "?", ""
-        # Find the closest previous mapped line
         mapped_lines = sorted(line_map.keys())
         prev = None
         for ml in mapped_lines:
@@ -485,7 +487,7 @@ def main():
             clyp_line = line_map[prev]
             if 0 <= clyp_line - 1 < len(clyp_lines):
                 return clyp_line, clyp_lines[clyp_line - 1]
-            elif clyp_lines:
+            if clyp_lines:
                 return len(clyp_lines), clyp_lines[-1]
         return "?", ""
 
@@ -509,11 +511,11 @@ def main():
             file_path = os.path.abspath(args.file)
             with open(file_path, "r", encoding="utf-8") as f:
                 clyp_code = f.read()
-        except (IOError, UnicodeDecodeError) as e:
-            Log.error(f"Error reading file {args.file}: {e}", file=sys.stderr)
-            sys.exit(1)
         except FileNotFoundError:
             Log.error(f"File {args.file} not found.", file=sys.stderr)
+            sys.exit(1)
+        except (IOError, UnicodeDecodeError) as e:
+            Log.error(f"Error reading file {args.file}: {e}", file=sys.stderr)
             sys.exit(1)
         except Exception as e:
             Log.error(
@@ -634,6 +636,7 @@ def main():
             sys.exit(1)
 
         temp_dir = tempfile.mkdtemp()
+        all_modules_meta = None  # Ensure variable is always defined
         try:
             with zipfile.ZipFile(clb_path, "r") as zf:
                 # Extract and read metadata
@@ -711,7 +714,7 @@ def main():
             sys.exit(1)
         finally:
             # Clean up for Windows by releasing the module lock
-            if "all_modules_meta" in locals():
+            if all_modules_meta is not None:
                 for module_name in all_modules_meta.keys():
                     if module_name in sys.modules:
                         del sys.modules[module_name]

@@ -55,7 +55,7 @@ long_description = Path("README.md").read_text(encoding="utf-8")
 print(f"Using requirements: {get_requirements()}")
 setup(
     name="clyp",
-    version="1.1.0",
+    version="1.1.1",
     author="CodeSoft",
     packages=["clyp"],
     install_requires=get_requirements(),
