@@ -666,11 +666,52 @@ def parse_clyp(
                 line = line.strip() + f" -> {return_type}"
                 stripped_line = line.strip()
 
+        # Support new style: funcName(args) returns Type { ... }
+        else:
+            func_match = re.match(r"^\s*([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*returns\s+([a-zA-Z_][\w\.\[\]]*)\s*\{?", stripped_line)
+            if func_match:
+                func_name = func_match.group(1)
+                args_str = func_match.group(2).strip()
+                return_type = func_match.group(3)
+                new_args = []
+                if args_str:
+                    args = [arg.strip() for arg in args_str.split(",")]
+                    for arg in args:
+                        if not arg:
+                            continue
+                        if arg == "self" or arg.startswith("*"):
+                            new_args.append(arg)
+                            continue
+                        parts = arg.strip().split()
+                        if len(parts) >= 2:
+                            arg_type = parts[0]
+                            arg_name = parts[1]
+                            default_value = " ".join(parts[2:])
+                            new_arg_str = f"{arg_name}: {arg_type}"
+                            if default_value:
+                                new_arg_str += f" {default_value}"
+                            new_args.append(new_arg_str)
+                        else:
+                            raise ClypSyntaxError(
+                                f"Argument '{arg}' in function definition must be in 'type name' format. Found in line: {stripped_line}"
+                            )
+                new_args_str = ", ".join(new_args)
+                # Build Python def line
+                def_line = f"def {func_name}({new_args_str}) -> {return_type}"
+                # If there's a block start, add colon
+                if "{" in stripped_line:
+                    def_line += ":"
+                line = def_line
+                stripped_line = line
+
         if stripped_line.startswith("repeat "):
             line = re.sub(r"repeat\s+\[(.*)\]\s+times", r"for _ in range(\1)", line)
             stripped_line = line.strip()
 
         line = re.sub(r"\brange\s+(\S+)\s+to\s+(\S+)", r"range(\1, \2 + 1)", line)
+
+        # Add support for x..y syntax (e.g., for i in 1..5)
+        line = re.sub(r"(\b\w+\b)\s*in\s*(\S+)\.\.(\S+)", r"\1 in range(\2, \3 + 1)", line)
 
         line = _replace_keywords_outside_strings(line)
 
