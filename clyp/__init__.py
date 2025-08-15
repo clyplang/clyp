@@ -5,5 +5,5 @@ __all__ = ["__version__"]
 
 
 __version__ = (
-    "1.1.1"  # Instead of fancy classes, we'll just use a string for simplicity
+    "2.0.0"  # Instead of fancy classes, we'll just use a string for simplicity
 )

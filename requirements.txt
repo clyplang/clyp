@@ -4,3 +4,4 @@ requests
 ycpm
 cython
 black
+orjson

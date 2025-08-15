@@ -1,7 +1,3 @@
-# This is a big to-do, but it can be held off for now
-# Python error handling will catch it for now, but they will be really cryptic and likely unhelpful
-
-
 class ClypError(Exception):
     """Base class for exceptions in Clyp."""
 

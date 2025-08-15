@@ -1,71 +1,28 @@
-# Here we do the transpilation of the Clyp code to Python code!!!!! :3
-# Cool right? Well actually it is not that cool, but it's a start
-
+# transpiler_fixed_full_v2.py
+# Full Clyp -> Python transpiler (v2)
+# Fixes: method-header conversion without 'function', let -> assignment, robust parsing, etc.
 
 import os
 import sys
 import pathlib
+import re
+import inspect
+from typing import List, Optional, Match, Tuple
 
+# local imports (keep path hack if needed)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import re
 import typeguard
-from typing import List, Optional, Match
-import inspect
 import clyp.stdlib as stdlib
 from clyp.ErrorHandling import ClypSyntaxError
 
 
-def _process_pipeline_chain(chain: str) -> str:
-    parts = [p.strip() for p in chain.split("|>") if p.strip()]
-    if len(parts) < 2:
-        return chain
-
-    result = parts[0]
-    for part in parts[1:]:
-        if not part:
-            continue
-        if "(" in part and part.endswith(")"):
-            open_paren_index = part.find("(")
-            func_name = part[:open_paren_index].strip()
-            args = part[open_paren_index + 1 : -1].strip()
-            if args:
-                result = f"{func_name}({result}, {args})"
-            else:
-                result = f"{func_name}({result})"
-        else:
-            func_name = part.strip()
-            result = f"{func_name}({result})"
-    return result
-
-
-def _process_pipeline_operator(line: str) -> str:
-    if "|>" not in line:
-        return line
-
-    # This does not handle strings with '|>' correctly, but is consistent with the rest of the transpiler.
-    assignment_match = re.match(r"(.*\s*=\s*)(.*)", line)
-    if assignment_match:
-        lhs = assignment_match.group(1)
-        rhs = assignment_match.group(2)
-        transformed_rhs = _process_pipeline_chain(rhs)
-        return lhs + transformed_rhs
-    else:
-        return _process_pipeline_chain(line)
-
-
 def _replace_keywords_outside_strings(line: str) -> str:
     """
-    Replaces specific Clyp keywords with Python equivalents outside of string literals in a line of code.
-
-    Replaces 'unless' with 'if not', 'is not' with '!=', and 'is' with '==' only in code segments, leaving string literals unchanged.
-
-    Parameters:
-        line (str): The input line of code to process.
-
-    Returns:
-        str: The line with Clyp keywords replaced outside of strings.
+    Replaces specific Clyp keywords with Python equivalents outside of string literals.
+    Replaces 'unless' -> 'if not', 'is not' -> '!=', 'is' -> '=='.
     """
+    # Split on simple single/double quoted strings (won't capture triple-quote groups inside)
     parts = re.split(r'(".*?"|\'.*?\')', line)
     for i in range(0, len(parts), 2):
         part = parts[i]
@@ -80,27 +37,15 @@ def _resolve_clyp_module_path(
     module_name: str, base_dir: pathlib.Path, script_path: Optional[str] = None
 ) -> Optional[pathlib.Path]:
     """
-    Resolves a dotted Clyp module name to a valid `.clyp` file or package `__init__.clyp` within the specified base directory or clypPackages folder.
-
-    Attempts to locate the module as either a single `.clyp` file or as a package directory containing an `__init__.clyp` file, verifying that all parent directories up to the base directory are valid Clyp packages.
-    Also supports a `clypPackages` folder next to the script or wheel install location.
-
-    Parameters:
-        module_name (str): The dotted name of the Clyp module to resolve.
-        base_dir (pathlib.Path): The base directory from which to resolve the module path.
-        script_path (Optional[str]): The path to the current script (for clypPackages lookup).
-
-    Returns:
-        Optional[pathlib.Path]: The resolved path to the `.clyp` file or package `__init__.clyp` if found and valid, otherwise `None`.
+    Resolves a dotted Clyp module name to a `.clyp` file or package `__init__.clyp` within base_dir
+    and optional clypPackages locations.
     """
     search_dirs = [base_dir]
-    # Add clypPackages next to the script, if available
     if script_path:
         script_dir = pathlib.Path(script_path).parent
         clyp_packages_dir = script_dir / "clypPackages"
         if clyp_packages_dir.exists() and clyp_packages_dir.is_dir():
             search_dirs.insert(0, clyp_packages_dir)
-    # Add clypPackages next to the installed wheel, if available
     try:
         import clyp
 
@@ -110,39 +55,37 @@ def _resolve_clyp_module_path(
             search_dirs.append(wheel_clyp_packages)
     except Exception:
         pass
+
     for search_dir in search_dirs:
-        # Try as a single file
         candidate = search_dir / (module_name.replace(".", os.sep) + ".clyp")
-        if candidate.exists():
+        if candidate.exists() and candidate.is_file():
             return candidate
-        # Try as a package (__init__.clyp)
         pkg_dir = search_dir / module_name.replace(".", os.sep)
         init_file = pkg_dir / "__init__.clyp"
         if init_file.exists():
-            # Check all parent folders up to search_dir have __init__.clyp
+            # verify package chain
             parts = module_name.split(".")
             check_dir = search_dir
             for part in parts:
                 check_dir = check_dir / part
                 if not (check_dir / "__init__.clyp").exists():
-                    break
-            else:
-                return init_file
+                    raise ClypSyntaxError(f"[E100] Parent directory missing __init__.clyp for package '{module_name}'", -1, -1)
+            return init_file
     return None
-
 
 
 @typeguard.typechecked
 def transpile_to_clyp(python_code: str) -> str:
     """
-    Transpiles Python source code into equivalent Clyp code using AST.
+    Transpile Python -> Clyp (reverse transpilation). Uses AST to generate simple Clyp.
     """
     import ast
 
     class ClypTranspiler(ast.NodeVisitor):
         def __init__(self):
-            self.lines = []
+            self.lines: List[str] = []
             self.indent = 0
+            self.in_class = False
 
         def emit(self, line: str = ""):
             self.lines.append("    " * self.indent + line)
@@ -152,8 +95,10 @@ def transpile_to_clyp(python_code: str) -> str:
                 self.visit(stmt)
 
         def visit_FunctionDef(self, node):
-            args = []
+            args: List[str] = []
             for arg in node.args.args:
+                if arg.arg == "self":
+                    continue
                 arg_type = None
                 if arg.annotation:
                     arg_type = ast.unparse(arg.annotation)
@@ -170,7 +115,6 @@ def transpile_to_clyp(python_code: str) -> str:
             self.emit("}")
 
         def visit_Assign(self, node):
-            # Only handle simple assignments
             if len(node.targets) == 1:
                 target = node.targets[0]
                 if isinstance(target, ast.Name):
@@ -181,7 +125,6 @@ def transpile_to_clyp(python_code: str) -> str:
                 self.emit(f"{', '.join([ast.unparse(t) for t in node.targets])} = {ast.unparse(node.value)};")
 
         def visit_AnnAssign(self, node):
-            # Type-annotated assignment
             target = node.target
             if isinstance(target, ast.Name):
                 var_type = ast.unparse(node.annotation)
@@ -242,8 +185,10 @@ def transpile_to_clyp(python_code: str) -> str:
         def visit_ClassDef(self, node):
             self.emit(f"class {node.name} {{")
             self.indent += 1
+            self.in_class = True
             for stmt in node.body:
                 self.visit(stmt)
+            self.in_class = False
             self.indent -= 1
             self.emit("}")
 
@@ -257,14 +202,12 @@ def transpile_to_clyp(python_code: str) -> str:
             self.emit("continue;")
 
         def visit_Import(self, node):
-            # Clyp does not support Python imports, skip or comment
             self.emit(f"// import {', '.join([ast.unparse(alias) for alias in node.names])}")
 
         def visit_ImportFrom(self, node):
             self.emit(f"// from {node.module} import {', '.join([ast.unparse(alias) for alias in node.names])}")
 
         def generic_visit(self, node):
-            # For nodes not explicitly handled
             for child in ast.iter_child_nodes(node):
                 self.visit(child)
 
@@ -274,6 +217,9 @@ def transpile_to_clyp(python_code: str) -> str:
     return "\n".join(transpiler.lines)
 
 
+# ----------------------------
+# Clyp -> Python parser
+# ----------------------------
 @typeguard.typechecked
 def parse_clyp(
     clyp_code: str,
@@ -282,91 +228,27 @@ def parse_clyp(
     target_lang: str = "python",
 ):
     """
-    Transpiles Clyp source code into equivalent Python code.
-
-    This function parses Clyp language syntax, handling constructs such as imports, type annotations, function definitions, pipeline operators, control flow, and indentation. It validates Clyp import statements, enforces correct usage of reserved Python keywords, and ensures syntactic correctness by transforming Clyp-specific features into valid Python code. Errors are raised for invalid imports, reserved keyword assignments, or malformed function definitions.
-
-    Parameters:
-        clyp_code (str): The source code written in the Clyp language to be transpiled.
-        file_path (Optional[str]): The file path of the Clyp source, used for resolving relative imports.
-        return_line_map (bool): If true, returns a map of python line numbers to clyp line numbers.
-        target_lang (str): The target language for transpilation, 'python' or 'clyp'.
-
-    Returns:
-        str: The transpiled Python code as a string.
+    Transpiles Clyp source code into Python code.
     """
     if target_lang == "clyp":
         return transpile_to_clyp(clyp_code)
 
-    python_keywords = set(
-        [
-            "False",
-            "None",
-            "True",
-            "and",
-            "as",
-            "assert",
-            "async",
-            "await",
-            "break",
-            "class",
-            "continue",
-            "def",
-            "del",
-            "elif",
-            "else",
-            "except",
-            "finally",
-            "for",
-            "from",
-            "global",
-            "if",
-            "import",
-            "in",
-            "is",
-            "lambda",
-            "nonlocal",
-            "not",
-            "or",
-            "pass",
-            "raise",
-            "return",
-            "try",
-            "while",
-            "with",
-            "yield",
-            # Built-in types
-            "int",
-            "float",
-            "str",
-            "list",
-            "dict",
-            "set",
-            "tuple",
-            "bool",
-            "object",
-            "bytes",
-            "complex",
-            "type",
-            # Other built-ins
-            "print",
-            "input",
-            "len",
-            "open",
-            "range",
-            "map",
-            "filter",
-            "zip",
-            "min",
-            "max",
-            "sum",
-            "any",
-            "all",
-            "abs",
-        ]
-    )
+    python_keywords = {
+        "False", "None", "True", "and", "as", "assert", "async", "await", "break",
+        "class", "continue", "def", "del", "elif", "else", "except", "finally", "for",
+        "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not",
+        "or", "pass", "raise", "return", "try", "while", "with", "yield",
+        # Built-in types
+        "int", "float", "str", "list", "dict", "set", "tuple", "bool", "object",
+        "bytes", "complex", "type",
+        # Other built-ins
+        "print", "input", "len", "open", "range", "map", "filter", "zip", "min", "max",
+        "sum", "any", "all", "abs",
+    }
+
     indentation_level: int = 0
     indentation_sign: str = "    "
+
     stdlib_names = [
         name
         for name, member in inspect.getmembers(stdlib)
@@ -374,6 +256,16 @@ def parse_clyp(
         and (inspect.isfunction(member) or inspect.isclass(member))
         and member.__module__ == stdlib.__name__
     ]
+    stdlib_imports = ", ".join(stdlib_names) if stdlib_names else ""
+
+    # Load clyp std module mapping (list of [full_name, alias]) if available.
+    try:
+        import clyp.std as _clyp_std
+
+        CLYP_STD_LIST = getattr(_clyp_std, "std_list", []) or []
+    except Exception:
+        CLYP_STD_LIST = []
+
     python_code: str = (
         "from typeguard import install_import_hook; install_import_hook()\n"
         "import gc\n"
@@ -381,363 +273,506 @@ def parse_clyp(
         "del gc\n"
         "import clyp\n"
         "from clyp.importer import clyp_import, clyp_include\n"
-        f"from clyp.stdlib import {', '.join(stdlib_names)}\n"
-        "del clyp\n"
-        "true = True; false = False; null = None\n"
     )
+    if stdlib_imports:
+        python_code += f"from clyp.stdlib import {stdlib_imports}\n"
+    else:
+        python_code += "import clyp.stdlib as _clyp_stdlib\n"
+    python_code += "del clyp\n"
+    python_code += "true = True; false = False; null = None\n"
 
-    processed_code: List[str] = []
-    in_string: bool = False
-    string_char: Optional[str] = None
-    in_comment: bool = False
-    escape_next: bool = False
+    # Char-level pass: normalize semicolons and braces while preserving strings and comments
+    processed_chars: List[str] = []
+    in_string = False
+    string_char = ""
+    escape_next = False
+    i = 0
+    src = clyp_code
+    n = len(src)
 
-    char: str
-    for char in clyp_code:
+    while i < n:
+        ch = src[i]
+
         if escape_next:
-            processed_code.append(char)
+            processed_chars.append(ch)
             escape_next = False
+            i += 1
             continue
 
-        if char == "\\":
-            processed_code.append(char)
+        if ch == "\\":
+            processed_chars.append(ch)
             escape_next = True
+            i += 1
             continue
 
-        if in_comment:
-            processed_code.append(char)
-            if char == "\n":
-                in_comment = False
-            continue
-
-        if in_string:
-            processed_code.append(char)
-            if char == string_char:
-                in_string = False
-            continue
-
-        # Not in string, not in comment
-        if char in ('"', "'''"):
+        # detect triple quotes (''' or """)
+        if not in_string and i + 2 < n and src[i : i + 3] in ("'''", '"""'):
             in_string = True
-            string_char = char
-            processed_code.append(char)
-        elif char == "#":
-            in_comment = True
-            processed_code.append(char)
-        elif char == ";":
-            processed_code.append("\n")
-        elif char == "{":
-            processed_code.append("{\n")
-        elif char == "}":
-            processed_code.append("}\n")
-        else:
-            processed_code.append(char)
+            string_char = src[i : i + 3]
+            processed_chars.extend(list(string_char))
+            i += 3
+            continue
 
-    infile_str_raw: str = "".join(processed_code)
+        # detect single or double quote start
+        if not in_string and ch in ("'", '"'):
+            in_string = True
+            string_char = ch
+            processed_chars.append(ch)
+            i += 1
+            continue
 
-    # Handle clyp imports
-    processed_import_lines = []
-    for line in infile_str_raw.split("\n"):
-        stripped_line = line.strip()
-        if stripped_line.startswith("clyp import "):
-            parts = stripped_line.split()
-            if len(parts) == 3:
-                module_name = parts[2]
-                module_path = None
-                if file_path:
-                    base_dir = pathlib.Path(file_path).parent
-                    module_path = _resolve_clyp_module_path(
-                        module_name, base_dir, file_path
-                    )
-                if module_path is not None:
-                    processed_import_lines.append(
-                        f"{module_name} = clyp_import('{module_name}', {repr(file_path)})"
-                    )
+        # inside string handling
+        if in_string:
+            if string_char in ("'''", '"""'):
+                if src[i : i + 3] == string_char:
+                    processed_chars.extend(list(string_char))
+                    i += 3
+                    in_string = False
+                    string_char = ""
                 else:
-                    raise ClypSyntaxError(
-                        f"Cannot import module '{module_name}': not a Clyp package or single-file script."
-                    )
+                    processed_chars.append(ch)
+                    i += 1
             else:
-                raise ClypSyntaxError(f"Invalid clyp import statement: {stripped_line}")
-        elif stripped_line.startswith("clyp from "):
-            match = re.match(r"clyp from\s+([\w\.]+)\s+import\s+(.*)", stripped_line)
+                if ch == string_char:
+                    processed_chars.append(ch)
+                    i += 1
+                    in_string = False
+                    string_char = ""
+                else:
+                    processed_chars.append(ch)
+                    i += 1
+            continue
+
+        # comments
+        if ch == "#":
+            processed_chars.append(ch)
+            i += 1
+            while i < n and src[i] != "\n":
+                processed_chars.append(src[i])
+                i += 1
+            continue
+
+        # semicolon -> newline
+        if ch == ";":
+            processed_chars.append("\n")
+            i += 1
+            continue
+
+        # braces -> keep as their own token with newline
+        if ch == "{":
+            processed_chars.append("{")
+            processed_chars.append("\n")
+            i += 1
+            continue
+        if ch == "}":
+            processed_chars.append("}")
+            processed_chars.append("\n")
+            i += 1
+            continue
+
+        processed_chars.append(ch)
+        i += 1
+
+    infile_str_raw = "".join(processed_chars)
+
+    # Handle clyp imports (line-oriented)
+    processed_import_lines: List[str] = []
+    for raw_line in infile_str_raw.split("\n"):
+        line = raw_line.rstrip("\r")
+        stripped_line = line.strip()
+        if not stripped_line:
+            processed_import_lines.append(line)
+            continue
+
+        # pyimport -> leave as a normal Python import
+        if stripped_line.startswith("pyimport "):
+            # e.g. "pyimport os" -> "import os"
+            py_stmt = stripped_line.replace("pyimport ", "import ", 1)
+            processed_import_lines.append(py_stmt)
+            continue
+
+        # import -> treat as a Clyp module import via clyp_import(...)
+        if stripped_line.startswith("import "):
+            parts = stripped_line.split()
+            if len(parts) != 2:
+                raise ClypSyntaxError(f"Invalid import statement: {stripped_line}")
+            module_name = parts[1]
+
+            # Special-case: map short std aliases to clyp.std.<module> if listed in clyp.std.std_list
+            mapped: Optional[Tuple[str, str]] = None
+            for entry in CLYP_STD_LIST:
+                if not entry:
+                    continue
+                full_name = entry[0] if len(entry) > 0 else None
+                alias = entry[1] if len(entry) > 1 else None
+                # match by alias or full module name or trailing name
+                if alias and module_name == alias:
+                    mapped = (full_name, alias)
+                    break
+                if full_name and module_name == full_name:
+                    mapped = (full_name, alias or full_name.split(".")[-1])
+                    break
+
+            if mapped:
+                full_name, alias = mapped
+                # Emit a normal Python import for standard clyp std modules
+                processed_import_lines.append(f"import {full_name} as {alias}")
+                continue
+
+            # Not a core std import — treat as Clyp module import via clyp_import(...)
+            module_path = None
+            if file_path:
+                base_dir = pathlib.Path(file_path).parent
+                module_path = _resolve_clyp_module_path(module_name, base_dir, file_path)
+            if module_path is not None:
+                processed_import_lines.append(f"{module_name} = clyp_import('{module_name}', {repr(file_path)})")
+            else:
+                raise ClypSyntaxError(
+                    f"Cannot import Clyp module '{module_name}': not a Clyp package or single-file script."
+                )
+            continue
+
+        # from <module> import ... -> treat as Clyp module member import
+        if stripped_line.startswith("from "):
+            match = re.match(r"from\s+([\w\.]+)\s+import\s+(.*)", stripped_line)
             if match:
                 module_name, imports_str = match.groups()
-                imported_names = [name.strip() for name in imports_str.split(",")]
+                imported_names = [name.strip() for name in imports_str.split(",") if name.strip()]
+
+                # If this is a std module, map to the clyp.std.<module> Python import
+                mapped_full: Optional[str] = None
+                for entry in CLYP_STD_LIST:
+                    if not entry:
+                        continue
+                    full_name = entry[0] if len(entry) > 0 else None
+                    alias = entry[1] if len(entry) > 1 else None
+                    if alias and module_name == alias:
+                        mapped_full = full_name
+                        break
+                    if full_name and module_name == full_name:
+                        mapped_full = full_name
+                        break
+                    if full_name and module_name == full_name.split(".")[-1]:
+                        mapped_full = full_name
+                        break
+
+                if mapped_full:
+                    # Preserve the RHS of the import as written
+                    processed_import_lines.append(f"from {mapped_full} import {imports_str}")
+                    continue
+
+                # Not a std module — fall back to clyp_import(...) behavior
                 module_path = None
                 if file_path:
                     base_dir = pathlib.Path(file_path).parent
-                    module_path = _resolve_clyp_module_path(
-                        module_name, base_dir, file_path
-                    )
+                    module_path = _resolve_clyp_module_path(module_name, base_dir, file_path)
                 if module_path is not None:
-                    processed_import_lines.append(
-                        f"_temp_module = clyp_import('{module_name}', {repr(file_path)})"
-                    )
+                    processed_import_lines.append(f"_temp_module = clyp_import('{module_name}', {repr(file_path)})")
                     for name in imported_names:
                         processed_import_lines.append(f"{name} = _temp_module.{name}")
                     processed_import_lines.append("del _temp_module")
                 else:
                     raise ClypSyntaxError(
-                        f"Cannot import module '{module_name}': not a Clyp package or single-file script."
+                        f"Cannot import from Clyp module '{module_name}': not a Clyp package or single-file script."
                     )
             else:
-                raise ClypSyntaxError(
-                    f"Invalid clyp from import statement: {stripped_line}"
-                )
-        elif stripped_line.startswith("include "):
+                raise ClypSyntaxError(f"Invalid from-import statement: {stripped_line}")
+            continue
+
+        # include stays the same
+        if stripped_line.startswith("include "):
             match = re.match(r'include\s+"([^"]+\.clb)"', stripped_line)
             if match:
                 clb_path = match.group(1)
-                processed_import_lines.append(
-                    f'clyp_include(r"{clb_path}", r"{file_path}")'
-                )
+                processed_import_lines.append(f'clyp_include(r"{clb_path}", r"{file_path}")')
             else:
                 raise ClypSyntaxError(f"Invalid include statement: {stripped_line}")
-        else:
-            processed_import_lines.append(line)
+            continue
+
+        processed_import_lines.append(line)
     infile_str_raw = "\n".join(processed_import_lines)
 
-    # Automatically insert 'pass' into empty blocks
+    # Insert pass for empty blocks: { ... } => { pass }
     infile_str_raw = re.sub(r"{(\s|#[^\n]*)*}", "{\n    pass\n}", infile_str_raw)
 
     infile_str_indented: str = ""
-    line_map = {}  # python line number (1-based) -> clyp line number (1-based)
+    line_map = {}
     clyp_lines = clyp_code.splitlines()
-    # Check for missing semicolons at the end of statements
-    # for idx, line in enumerate(clyp_lines):
-    #     stripped = line.strip()
-    #     # Ignore empty lines, comments, block starts/ends, and import lines
-    #     # Skip empty lines, comments, block delimiters, and import statements
-    #     is_empty_or_comment = not stripped or stripped.startswith('#')
-    #     is_block_delimiter = stripped.endswith('{') or stripped == '}'
-    #     is_import_statement = stripped.startswith('clyp import') or stripped.startswith('clyp from')
-    #
-    #     if is_empty_or_comment or is_block_delimiter or is_import_statement:
-    #         continue
-    #     # Ignore lines that are only whitespace or block headers
-    #     if re.match(r'^(def |function |if |elif |for |while |class |try|except|finally|with|repeat )', stripped) or stripped in ('else:', 'finally:'):
-    #         continue
-    #     # If the line is not a block header and does not end with a semicolon, raise error
-    #     if not stripped.endswith(';'):
-    #         raise ClypSyntaxError(f"Missing semicolon at end of statement on line {idx+1}: {line}")
-    py_line_num = python_code.count("\n") + 1  # start after header
-    for idx, line in enumerate(infile_str_raw.split("\n")):
+    py_line_num = python_code.count("\n") + 1
+    in_class_block = False
+    class_indentation_level: Optional[int] = None
+
+    def strip_trailing_semicolon_from_call(s: str) -> str:
+        """
+        Remove trailing semicolon from balanced call lines ending with ');'
+        """
+        t = s.rstrip()
+        if not t.endswith(");"):
+            return s
+        balance = 0
+        in_str_local = False
+        str_char_local = ""
+        esc_local = False
+        for ch in t:
+            if esc_local:
+                esc_local = False
+                continue
+            if ch == "\\":
+                esc_local = True
+                continue
+            if in_str_local:
+                if ch == str_char_local:
+                    in_str_local = False
+                    str_char_local = ""
+                continue
+            if ch in ('"', "'"):
+                in_str_local = True
+                str_char_local = ch
+                continue
+            if ch == "(":
+                balance += 1
+            elif ch == ")":
+                balance -= 1
+        if balance == 0:
+            return t[:-1]
+        return s
+
+    def find_unquoted_hash(s: str) -> int:
+        in_str_local = False
+        str_char_local = ""
+        esc_local = False
+        for i, ch in enumerate(s):
+            if esc_local:
+                esc_local = False
+                continue
+            if ch == "\\":
+                esc_local = True
+                continue
+            if in_str_local:
+                if ch == str_char_local:
+                    in_str_local = False
+                    str_char_local = ""
+                continue
+            if ch in ("'", '"'):
+                # naive triple-quote detection handled in earlier pass, keep simple here
+                in_str_local = True
+                str_char_local = ch
+                continue
+            if ch == "#":
+                return i
+        return -1
+
+    for idx, raw_line in enumerate(infile_str_raw.split("\n")):
         clyp_line_num = idx + 1
+        line = raw_line.rstrip("\r")
 
-        line = _process_pipeline_operator(line)
-        m: Optional[Match[str]] = re.search(r"[ \t]*(#.*$)", line)
-
-        if m is not None:
-            m2: Optional[Match[str]] = re.search(r'["\'].*#.*["\']', m.group(0))
-            if m2 is not None:
-                m = None
-
-        if m is not None:
-            add_comment: str = m.group(0)
-            line = re.sub(r"[ \t]*(#.*$)", "", line)
-        else:
-            add_comment: str = ""
-
-        if not line.strip():
-            infile_str_indented += (
-                indentation_level * indentation_sign + add_comment.lstrip() + "\n"
-            )
+        # skip defines
+        if re.match(r"^\s*define\s+\w+(\s+\S+)?\s*;?\s*$", line):
             continue
 
-        stripped_line = line.strip()
+        # split comment (avoid hashes in strings)
+        hash_idx = find_unquoted_hash(line)
+        if hash_idx != -1:
+            code_part = line[:hash_idx]
+            add_comment = line[hash_idx:]
+        else:
+            code_part = line
+            add_comment = ""
 
-        if stripped_line.startswith("let "):
-            line = re.sub(r"^\s*let\s+", "", line)
-            stripped_line = line.strip()
+        if not code_part.strip():
+            infile_str_indented += indentation_level * indentation_sign + add_comment.lstrip() + "\n"
+            continue
 
-        keywords = (
-            "def ",
-            "function ",
-            "if ",
-            "for ",
-            "while ",
-            "class ",
-            "return ",
-            "elif ",
-            "else",
-            "{",
-            "}",
-            "print",
-            "repeat ",
+        # handle 'let ' declarations: let x = ... -> x = ...
+        if code_part.lstrip().startswith("let "):
+            code_part = code_part.lstrip()[4:].lstrip()
+
+        stripped_line = code_part.strip()
+
+        # handle closing braces at start of line or lone '}'
+        if stripped_line == "}" or stripped_line.startswith("}"):
+            indentation_level = max(0, indentation_level - 1)
+            if in_class_block and (class_indentation_level is not None and indentation_level < class_indentation_level):
+                in_class_block = False
+                class_indentation_level = None
+            code_part = code_part.lstrip("}").lstrip()
+            stripped_line = code_part.strip()
+            if not stripped_line:
+                infile_str_indented += indentation_level * indentation_sign + add_comment.lstrip() + "\n"
+                line_map[py_line_num] = clyp_line_num
+                py_line_num += 1
+                continue
+
+        # class declaration
+        if stripped_line.startswith("class "):
+            class_match = re.match(r"class\s+([a-zA-Z_][\w]*)\s*\{?", stripped_line)
+            if class_match:
+                class_name = class_match.group(1)
+                infile_str_indented += indentation_sign * indentation_level + f"class {class_name}:" + add_comment + "\n"
+                in_class_block = True
+                class_indentation_level = indentation_level + 1
+                indentation_level += 1
+                line_map[py_line_num] = clyp_line_num
+                py_line_num += 1
+                continue
+
+        # class member declaration -> annotation (e.g., "int count = 0" -> "count: int = 0")
+        class_field_match = re.match(r"^([a-zA-Z_][\w]*)\s+([a-zA-Z_][\w]*)(\s*=\s*.+)?;?$", stripped_line)
+        if in_class_block and class_field_match:
+            typ, name, default = class_field_match.groups()
+            default = default.strip() if default else ""
+            if default:
+                default = default.lstrip("= ").strip()
+                outfile_line = f"{name}: {typ} = {default}"
+            else:
+                outfile_line = f"{name}: {typ}"
+            infile_str_indented += indentation_sign * indentation_level + outfile_line + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # METHOD HEADER WITHOUT 'function' KEYWORD
+        # e.g. increment(self) returns null:
+        method_def_match = re.match(
+            r"^([a-zA-Z_][\w]*)\s*\(([^)]*)\)\s*returns\s+([a-zA-Z_][\w\.\[\]]*)\s*[:{]?",
+            stripped_line,
         )
-        if stripped_line.startswith("except"):
-            match = re.match(r"except\s*\((.*)\)", stripped_line)
-            if match:
-                content = match.group(1).strip()
-                parts = content.split()
-                if len(parts) == 2:
-                    exc_type, exc_var = parts
-                    line = re.sub(
-                        r"except\s*\(.*\)", f"except {exc_type} as {exc_var}", line
-                    )
-                elif len(parts) == 1:
-                    exc_type = parts[0]
-                    line = re.sub(r"except\s*\(.*\)", f"except {exc_type}", line)
-                stripped_line = line.strip()
-        elif not stripped_line.startswith(keywords):
-            # Use a regex that captures an optional type, a name, and the rest of the line
-            match = re.match(
-                r"^\s*(?:([a-zA-Z_][\w\.\[\]]*)\s+)?([a-zA-Z_]\w*)\s*=(.*)", line
-            )
-            if match:
-                var_type, var_name, rest_of_line = match.groups()
-                # Check for reserved keyword assignment
-                if var_name in python_keywords:
-                    raise ClypSyntaxError(
-                        f"Cannot assign to reserved keyword or built-in name: '{var_name}'"
-                    )
-                if var_type:
-                    # Reconstruct the line in Python's type-hint format
-                    line = f"{var_name.strip()}: {var_type.strip()} = {rest_of_line.strip()}"
+        if method_def_match:
+            name, args_str, return_type = method_def_match.groups()
+            args = [a.strip() for a in args_str.split(",") if a.strip()]
+            new_args: List[str] = []
+            # If inside class block, auto-add self if not provided
+            if in_class_block:
+                if not any(a.split()[0] == "self" for a in args):
+                    new_args.append("self")
+            for arg in args:
+                if arg == "self" or arg.startswith("*"):
+                    new_args.append(arg)
+                    continue
+                parts = arg.split()
+                if len(parts) >= 2:
+                    arg_type = parts[0]
+                    arg_name = parts[1]
+                    default_value = " ".join(parts[2:]) if len(parts) > 2 else ""
+                    new_arg_str = f"{arg_name}: {arg_type}"
+                    if default_value:
+                        new_arg_str += f" = {default_value.lstrip('= ').strip()}"
+                    new_args.append(new_arg_str)
                 else:
-                    # It's a regular variable assignment
-                    line = f"{var_name.strip()} = {rest_of_line.strip()}"
-                stripped_line = line
-            else:
-                # Handle declarations without assignment (e.g., in classes)
-                match_decl = re.match(
-                    r"^\s*([a-zA-Z_][\w\.\[\]]*)\s+([a-zA-Z_]\w*)\s*$", line
-                )
-                if match_decl:
-                    var_type, var_name = match_decl.groups()
-                    line = f"{var_name.strip()}: {var_type.strip()}"
-                    stripped_line = line
-
-        if stripped_line.startswith("def ") or stripped_line.startswith("function "):
-            if stripped_line.startswith("function "):
-                line = line.replace("function", "def", 1)
-                stripped_line = line.strip()
-
-            return_type_match = re.search(
-                r"returns\s+([a-zA-Z_][\w\.\[\]]*)", stripped_line
-            )
-            if not return_type_match:
-                raise ClypSyntaxError(
-                    f"Function definition requires a 'returns' clause. Found in line: {stripped_line}"
-                )
-
-            return_type = return_type_match.group(1)
-            line = re.sub(r"\s*returns\s+([a-zA-Z_][\w\.\[\]]*)", "", line)
-            stripped_line = line.strip()
-
-            args_match = re.search(r"\(([^)]*)\)", stripped_line)
-            if args_match:
-                original_args_str = args_match.group(1)
-                args_str = original_args_str.strip()
-
-                if args_str:
-                    args = [arg.strip() for arg in args_str.split(",")]
-                    new_args = []
-                    for arg in args:
-                        if not arg:
-                            continue
-                        if arg == "self" or arg.startswith("*"):
-                            new_args.append(arg)
-                            continue
-
-                        parts = arg.strip().split()
-                        if len(parts) >= 2:
-                            arg_type = parts[0]
-                            arg_name = parts[1]
-                            default_value = " ".join(parts[2:])
-                            new_arg_str = f"{arg_name}: {arg_type}"
-                            if default_value:
-                                new_arg_str += f" {default_value}"
-                            new_args.append(new_arg_str)
-                        else:
-                            raise ClypSyntaxError(
-                                f"Argument '{arg}' in function definition must be in 'type name' format. Found in line: {stripped_line}"
-                            )
-
-                    new_args_str = ", ".join(new_args)
-                    line = line.replace(original_args_str, new_args_str)
-                    stripped_line = line.strip()
-
-            if "{" in line:
-                line_before_brace, line_after_brace = line.rsplit("{", 1)
-                line = f"{line_before_brace.rstrip()} -> {return_type} {{{line_after_brace}"
-            else:
-                line = line.strip() + f" -> {return_type}"
-                stripped_line = line.strip()
-
-        # Support new style: funcName(args) returns Type { ... }
-        else:
-            func_match = re.match(r"^\s*([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*returns\s+([a-zA-Z_][\w\.\[\]]*)\s*\{?", stripped_line)
-            if func_match:
-                func_name = func_match.group(1)
-                args_str = func_match.group(2).strip()
-                return_type = func_match.group(3)
-                new_args = []
-                if args_str:
-                    args = [arg.strip() for arg in args_str.split(",")]
-                    for arg in args:
-                        if not arg:
-                            continue
-                        if arg == "self" or arg.startswith("*"):
-                            new_args.append(arg)
-                            continue
-                        parts = arg.strip().split()
-                        if len(parts) >= 2:
-                            arg_type = parts[0]
-                            arg_name = parts[1]
-                            default_value = " ".join(parts[2:])
-                            new_arg_str = f"{arg_name}: {arg_type}"
-                            if default_value:
-                                new_arg_str += f" {default_value}"
-                            new_args.append(new_arg_str)
-                        else:
-                            raise ClypSyntaxError(
-                                f"Argument '{arg}' in function definition must be in 'type name' format. Found in line: {stripped_line}"
-                            )
-                new_args_str = ", ".join(new_args)
-                # Build Python def line
-                def_line = f"def {func_name}({new_args_str}) -> {return_type}"
-                # If there's a block start, add colon
-                if "{" in stripped_line:
-                    def_line += ":"
-                line = def_line
-                stripped_line = line
-
-        if stripped_line.startswith("repeat "):
-            line = re.sub(r"repeat\s+\[(.*)\]\s+times", r"for _ in range(\1)", line)
-            stripped_line = line.strip()
-
-        line = re.sub(r"\brange\s+(\S+)\s+to\s+(\S+)", r"range(\1, \2 + 1)", line)
-
-        # Add support for x..y syntax (e.g., for i in 1..5)
-        line = re.sub(r"(\b\w+\b)\s*in\s*(\S+)\.\.(\S+)", r"\1 in range(\2, \3 + 1)", line)
-
-        line = _replace_keywords_outside_strings(line)
-
-        line = line.lstrip()
-
-        line_to_indent = line
-        if line.startswith("}"):
-            indentation_level -= 1
-            line_to_indent = line.lstrip("}").lstrip()
-
-        indented_line = (indentation_level * indentation_sign) + line_to_indent
-
-        if indented_line.rstrip().endswith("{"):
+                    # If user wrote "x" (no type), accept it as-is
+                    if len(parts) == 1:
+                        new_args.append(parts[0])
+                    else:
+                        raise ClypSyntaxError(
+                            f"Argument '{arg}' in method definition is malformed. Found in line: {stripped_line}"
+                        )
+            new_args_str = ", ".join(new_args)
+            # map Clyp 'null' -> Python 'None' in return type if present
+            py_return_type = "None" if return_type == "null" else return_type
+            infile_str_indented += indentation_sign * indentation_level + f"def {name}({new_args_str}) -> {py_return_type}:" + add_comment + "\n"
             indentation_level += 1
-            line = indented_line.rsplit("{", 1)[0].rstrip() + ":"
-        else:
-            line = indented_line
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
 
-        infile_str_indented += line + add_comment + "\n"
+        # function definitions (explicit 'function' keyword)
+        func_def_match = re.match(
+            r"^function\s+([a-zA-Z_][\w]*)\s*\(([^)]*)\)\s*returns\s+([a-zA-Z_][\w\.\[\]]*)\s*\{?",
+            stripped_line,
+        )
+        if func_def_match:
+            func_name, args_str, return_type = func_def_match.groups()
+            args = [arg.strip() for arg in args_str.split(",") if arg.strip()]
+            new_args: List[str] = []
+            # If inside a class, auto-add self if not present
+            if in_class_block:
+                if not any(a.split()[0] == "self" for a in args):
+                    new_args.append("self")
+            for arg in args:
+                if arg == "self" or arg.startswith("*"):
+                    new_args.append(arg)
+                    continue
+                parts = arg.split()
+                if len(parts) >= 2:
+                    arg_type = parts[0]
+                    arg_name = parts[1]
+                    default_value = " ".join(parts[2:]) if len(parts) > 2 else ""
+                    new_arg_str = f"{arg_name}: {arg_type}"
+                    if default_value:
+                        new_arg_str += f" = {default_value.lstrip('= ').strip()}"
+                    new_args.append(new_arg_str)
+                else:
+                    # allow untyped arg names
+                    if len(parts) == 1:
+                        new_args.append(parts[0])
+                    else:
+                        raise ClypSyntaxError(
+                            f"Argument '{arg}' in function definition must be in 'type name' format. Found in line: {stripped_line}"
+                        )
+            new_args_str = ", ".join(new_args)
+            py_return_type = "None" if return_type == "null" else return_type
+            infile_str_indented += indentation_sign * indentation_level + f"def {func_name}({new_args_str}) -> {py_return_type}:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # repeat blocks heuristics
+        if stripped_line.startswith("repeat "):
+            match_repeat = re.match(r"repeat\s+(\d+)\s*\{?", stripped_line)
+            if match_repeat:
+                times = match_repeat.group(1)
+                infile_str_indented += indentation_sign * indentation_level + f"for _ in range({times}):" + add_comment + "\n"
+                indentation_level += 1
+                line_map[py_line_num] = clyp_line_num
+                py_line_num += 1
+                continue
+            else:
+                transformed = re.sub(r"repeat\s+\[(.*)\]\s+times", r"for _ in range(\1):", stripped_line)
+                infile_str_indented += indentation_sign * indentation_level + transformed + add_comment + "\n"
+                line_map[py_line_num] = clyp_line_num
+                py_line_num += 1
+                continue
+
+        # range x to y -> range(x, y + 1)
+        code_part = re.sub(r"\brange\s+(\S+)\s+to\s+(\S+)", r"range(\1, \2 + 1)", code_part)
+
+        # replace keywords outside strings
+        code_part = _replace_keywords_outside_strings(code_part)
+
+        # remove trailing semicolon from function calls where parentheses are balanced
+        code_part = strip_trailing_semicolon_from_call(code_part)
+
+        # left-trim and indent
+        code_part = code_part.lstrip()
+        indented_line = indentation_level * indentation_sign + code_part
+
+        # handle block opener leftover '{'
+        if indented_line.rstrip().endswith("{"):
+            indented_line = indented_line.rsplit("{", 1)[0].rstrip() + ":"
+            infile_str_indented += indented_line + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # else if -> elif
+        indented_line = re.sub(r"^\s*else\s+if\b", lambda m: m.group(0).replace("else if", "elif"), indented_line, flags=re.IGNORECASE)
+
+        # strip stray semicolons at end of line
+        if indented_line.rstrip().endswith(";"):
+            indented_line = indented_line.rstrip().rstrip(";")
+
+        infile_str_indented += indented_line + add_comment + "\n"
         line_map[py_line_num] = clyp_line_num
         py_line_num += 1
 
-    infile_str_indented = re.sub(r"else\s+if", "elif", infile_str_indented)
+    # final cleanups: remove leftover single-line closing braces
+    infile_str_indented = re.sub(r'^[ \t]*\}\s*$\n?', '', infile_str_indented, flags=re.M)
     infile_str_indented = re.sub(r";\n", "\n", infile_str_indented)
 
     python_code += infile_str_indented
+
     if return_line_map:
         return python_code, line_map, clyp_lines
     return python_code

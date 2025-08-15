@@ -1,6 +1,8 @@
 # examples/file_io.clyp
 # Demonstrates file input and output operations using the standard library.
 
+define optimization_level 2;
+
 str file_path = "clyp_example.txt";
 str content = "Hello from Clyp!\nThis is a test file created by a Clyp script.";
 

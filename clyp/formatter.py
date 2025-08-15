@@ -14,11 +14,14 @@ def format_clyp_code(clyp_code: str) -> str:
     """
     # Transpile Clyp to Python
     python_code = parse_clyp(clyp_code)
+    if not isinstance(python_code, str):
+        # If parse_clyp returns a tuple, extract the string part
+        python_code = python_code[0]
 
     # Format the Python code using black
     try:
         formatted_python_code = black.format_str(python_code, mode=black.FileMode())
-    except black.NothingChanged:
+    except Exception:
         formatted_python_code = python_code
 
     # Transpile the formatted Python back to Clyp
