@@ -1,0 +1,65 @@
+{
+  "$schema": "https://clyplang.org/schemas/clyp-project.json",
+  "name": "demo-project",
+  "version": "0.1.0",
+  "description": "A new Clyp project: demo-project",
+  "entry": "src/main.clyp",
+  "author": {
+    "name": "Your Name",
+    "email": "you@example.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "clyp",
+    "project"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/demo-project.git"
+  },
+  "dependencies": {
+    "http": "2.1.0"
+  },
+  "devDependencies": {
+    "testing": "1.5.0"
+  },
+  "scripts": {
+    "build": "python -m clyp.cli check .",
+    "test": "python -m clyp.cli run tests/test_main.clyp",
+    "format": "python -m clyp.cli format src/",
+    "clean": "rm -rf build/ dist/ .clyp-cache/"
+  },
+  "build": {
+    "optimization": 0,
+    "outputDir": "build",
+    "transpileOnly": false,
+    "sourceMap": true
+  },
+  "imports": {
+    "paths": {
+      "@src/*": [
+        "src/*"
+      ],
+      "@lib/*": [
+        "lib/*"
+      ],
+      "@tests/*": [
+        "tests/*"
+      ]
+    }
+  },
+  "tools": {
+    "formatter": {
+      "lineLength": 88,
+      "indentSize": 4,
+      "useTabs": false
+    },
+    "linter": {
+      "strict": false,
+      "rules": {
+        "requireReturnTypes": true,
+        "enforceNamingConventions": true
+      }
+    }
+  }
+}

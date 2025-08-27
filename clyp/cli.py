@@ -215,6 +215,168 @@ def extract_optimization_level(clyp_code: str) -> int:
 # Add global verbose flag
 VERBOSE = False
 
+# Clyp.json configuration handling
+def load_clyp_config(config_path: str) -> Optional[Dict[str, Any]]:
+    """Load and validate clyp.json configuration file."""
+    try:
+        if not os.path.exists(config_path):
+            return None
+        
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        
+        # Basic validation
+        if not isinstance(config, dict):
+            Log.error(f"[V100] Invalid clyp.json: Root must be an object.")
+            return None
+            
+        # Validate required fields
+        if "name" not in config:
+            Log.warn("[V101] clyp.json missing 'name' field")
+        if "version" not in config:
+            Log.warn("[V102] clyp.json missing 'version' field")
+        if "entry" not in config:
+            Log.warn("[V103] clyp.json missing 'entry' field")
+            
+        return config
+        
+    except json.JSONDecodeError as e:
+        Log.error(f"[V100] Invalid JSON in clyp.json: {e}")
+        Log.info("💡 Tip: Check for syntax errors like missing commas or quotes", file=sys.stderr)
+        return None
+    except Exception as e:
+        code = get_error_code(e)
+        Log.error(f"[{code}] Error reading clyp.json: {e}")
+        return None
+
+def get_project_config(project_dir: str = None) -> Optional[Dict[str, Any]]:
+    """Find and load the nearest clyp.json configuration."""
+    try:
+        if project_dir is None:
+            project_dir = os.getcwd()
+    except (OSError, FileNotFoundError):
+        # Handle case where current directory doesn't exist
+        if project_dir is None:
+            return None
+    
+    # Look for clyp.json in current directory and parent directories
+    current_dir = os.path.abspath(project_dir)
+    while current_dir != os.path.dirname(current_dir):  # Stop at filesystem root
+        config_path = os.path.join(current_dir, "clyp.json")
+        if os.path.exists(config_path):
+            if VERBOSE:
+                Log.info(f"Found clyp.json at: {config_path}")
+            return load_clyp_config(config_path)
+        current_dir = os.path.dirname(current_dir)
+    
+    return None
+
+def resolve_config_path(file_path: str, config: Dict[str, Any]) -> str:
+    """Resolve a path relative to the clyp.json location."""
+    if os.path.isabs(file_path):
+        return file_path
+    
+    # Find the directory containing clyp.json
+    config_dir = os.getcwd()
+    current_dir = os.path.abspath(config_dir)
+    while current_dir != os.path.dirname(current_dir):
+        if os.path.exists(os.path.join(current_dir, "clyp.json")):
+            config_dir = current_dir
+            break
+        current_dir = os.path.dirname(current_dir)
+    
+    return os.path.join(config_dir, file_path)
+
+def run_project_script(script_name: str, config: Dict[str, Any]) -> bool:
+    """Run a script defined in clyp.json scripts section."""
+    scripts = config.get("scripts", {})
+    if script_name not in scripts:
+        Log.error(f"Script '{script_name}' not found in clyp.json")
+        available = list(scripts.keys())
+        if available:
+            Log.info(f"💡 Available scripts: {', '.join(available)}")
+        return False
+    
+    script_command = scripts[script_name]
+    Log.info(f"Running script '{script_name}': {script_command}")
+    
+    # Execute the script command
+    import subprocess
+    try:
+        result = subprocess.run(script_command, shell=True, check=True)
+        return result.returncode == 0
+    except subprocess.CalledProcessError as e:
+        Log.error(f"Script '{script_name}' failed with exit code {e.returncode}")
+        return False
+    except Exception as e:
+        code = get_error_code(e)
+        Log.error(f"[{code}] Error running script '{script_name}': {e}")
+        return False
+
+def save_clyp_config(config: Dict[str, Any], config_path: str) -> bool:
+    """Save clyp.json configuration to file."""
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception as e:
+        code = get_error_code(e)
+        Log.error(f"[{code}] Error saving clyp.json: {e}")
+        return False
+
+def add_dependency(dep_spec: str, config: Dict[str, Any], config_path: str, is_dev: bool = False) -> bool:
+    """Add a dependency to clyp.json."""
+    # Parse dependency specification (name@version or just name)
+    if "@" in dep_spec:
+        name, version = dep_spec.split("@", 1)
+    else:
+        name = dep_spec
+        version = "*"  # Latest version
+    
+    # Determine which dependencies section to use
+    deps_key = "devDependencies" if is_dev else "dependencies"
+    if deps_key not in config:
+        config[deps_key] = {}
+    
+    # Add the dependency
+    config[deps_key][name] = version
+    
+    # Save the updated config
+    if save_clyp_config(config, config_path):
+        dep_type = "development " if is_dev else ""
+        Log.success(f"Added {dep_type}dependency: {name}@{version}")
+        return True
+    return False
+
+def remove_dependency(dep_name: str, config: Dict[str, Any], config_path: str, is_dev: bool = False) -> bool:
+    """Remove a dependency from clyp.json."""
+    deps_key = "devDependencies" if is_dev else "dependencies"
+    
+    if deps_key not in config or dep_name not in config[deps_key]:
+        dep_type = "development " if is_dev else ""
+        Log.error(f"{dep_type}dependency '{dep_name}' not found")
+        return False
+    
+    # Remove the dependency
+    del config[deps_key][dep_name]
+    
+    # Save the updated config
+    if save_clyp_config(config, config_path):
+        dep_type = "development " if is_dev else ""
+        Log.success(f"Removed {dep_type}dependency: {dep_name}")
+        return True
+    return False
+
+def find_config_file() -> Optional[str]:
+    """Find the nearest clyp.json file."""
+    current_dir = os.getcwd()
+    while current_dir != os.path.dirname(current_dir):  # Stop at filesystem root
+        config_path = os.path.join(current_dir, "clyp.json")
+        if os.path.exists(config_path):
+            return config_path
+        current_dir = os.path.dirname(current_dir)
+    return None
+
 def python_to_clyp_transpile(py_code):
     # Log when transpiler is invoked if verbose
     if VERBOSE:
@@ -287,7 +449,11 @@ def main():
         "  clyp format main.clyp        # Format Clyp code\n"
         "  clyp py2clyp script.py       # Convert Python to Clyp\n"
         "  clyp check .                 # Check project for errors\n"
-        "  clyp deps main.clyp          # Show dependency tree",
+        "  clyp deps main.clyp          # Show dependency tree\n"
+        "  clyp script build            # Run a script from clyp.json\n"
+        "  clyp config --validate       # Validate clyp.json configuration\n"
+        "  clyp add math@1.0.0          # Add a dependency\n"
+        "  clyp remove math             # Remove a dependency",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     # Add global verbose flag
@@ -320,6 +486,26 @@ def main():
     deps_parser.add_argument("file", type=str, nargs="?", default=None, help="Clyp file or project to analyze.")
     init_parser = subparsers.add_parser("init", help="Initialize a new Clyp project. Example: clyp init my-project")
     init_parser.add_argument("name", type=str, help="The name of the project.")
+    init_parser.add_argument("--template", type=str, default="default", help="Project template (default, library, web).")
+    
+    # Add script command
+    script_parser = subparsers.add_parser("script", help="Run a script defined in clyp.json. Example: clyp script build")
+    script_parser.add_argument("name", type=str, help="Name of the script to run.")
+    
+    # Add config command
+    config_parser = subparsers.add_parser("config", help="Show or validate clyp.json configuration. Example: clyp config")
+    config_parser.add_argument("--validate", action="store_true", help="Validate clyp.json format and structure.")
+    config_parser.add_argument("--show", action="store_true", help="Show the current configuration.")
+    
+    # Add dependency management commands
+    add_parser = subparsers.add_parser("add", help="Add a dependency to clyp.json. Example: clyp add math@1.0.0")
+    add_parser.add_argument("dependency", type=str, help="Dependency name[@version] to add.")
+    add_parser.add_argument("--dev", action="store_true", help="Add as development dependency.")
+    
+    remove_parser = subparsers.add_parser("remove", help="Remove a dependency from clyp.json. Example: clyp remove math")
+    remove_parser.add_argument("dependency", type=str, help="Dependency name to remove.")
+    remove_parser.add_argument("--dev", action="store_true", help="Remove from development dependencies.")
+    
     args = parser.parse_args()
     # ... existing code ...
 
@@ -439,14 +625,65 @@ def main():
             Log.error(f"Directory '{project_name}' already exists.")
             sys.exit(1)
         os.makedirs(project_root)
+        
+        # Enhanced clyp.json with comprehensive metadata
         config = {
+            "$schema": "https://clyplang.org/schemas/clyp-project.json",
             "name": project_name,
             "version": "0.1.0",
-            "entry": "src/main.clyp"
+            "description": f"A new Clyp project: {project_name}",
+            "entry": "src/main.clyp",
+            "author": {
+                "name": "Your Name",
+                "email": "you@example.com"
+            },
+            "license": "MIT",
+            "keywords": ["clyp", "project"],
+            "repository": {
+                "type": "git",
+                "url": f"https://github.com/yourusername/{project_name}.git"
+            },
+            "dependencies": {},
+            "devDependencies": {},
+            "scripts": {
+                "build": "python -m clyp.cli check .",
+                "test": "python -m clyp.cli run tests/test_main.clyp",
+                "format": "python -m clyp.cli format src/",
+                "clean": "rm -rf build/ dist/ .clyp-cache/"
+            },
+            "build": {
+                "optimization": 0,
+                "outputDir": "build",
+                "transpileOnly": False,
+                "sourceMap": True
+            },
+            "imports": {
+                "paths": {
+                    "@src/*": ["src/*"],
+                    "@lib/*": ["lib/*"],
+                    "@tests/*": ["tests/*"]
+                }
+            },
+            "tools": {
+                "formatter": {
+                    "lineLength": 88,
+                    "indentSize": 4,
+                    "useTabs": False
+                },
+                "linter": {
+                    "strict": False,
+                    "rules": {
+                        "requireReturnTypes": True,
+                        "enforceNamingConventions": True
+                    }
+                }
+            }
         }
+        
         config_path = os.path.join(project_root, "clyp.json")
         with open(config_path, "w") as f:
-            json.dump(config, f, indent=4)
+            json.dump(config, f, indent=2)
+        
         src_dir = os.path.join(project_root, "src")
         os.makedirs(src_dir)
         main_clyp_path = os.path.join(src_dir, "main.clyp")
@@ -461,6 +698,16 @@ def main():
             f.write('#     return "Hello, " + name + "!";\n')
             f.write('# }\n')
             f.write('# print(greet("World"));\n')
+        
+        # Create tests directory with example test
+        tests_dir = os.path.join(project_root, "tests")
+        os.makedirs(tests_dir)
+        test_main_path = os.path.join(tests_dir, "test_main.clyp")
+        with open(test_main_path, "w") as f:
+            f.write('# Example test file\n')
+            f.write('# TODO: Add actual tests\n')
+            f.write('print("All tests passed!");\n')
+        
         gitignore_path = os.path.join(project_root, ".gitignore")
         with open(gitignore_path, "w") as f:
             f.write("# Build outputs\n")
@@ -482,9 +729,48 @@ def main():
             f.write("# OS files\n")
             f.write(".DS_Store\n")
             f.write("Thumbs.db\n")
-        Log.success(f"Initialized Clyp project '{project_name}'")
+            f.write("\n")
+            f.write("# Clyp-specific\n")
+            f.write("*.clyp.temp\n")
+            f.write(".clyp-debug/\n")
+        
+        # Create README.md
+        readme_path = os.path.join(project_root, "README.md")
+        with open(readme_path, "w") as f:
+            f.write(f"# {project_name}\n\n")
+            f.write(f"A new Clyp project: {project_name}\n\n")
+            f.write("## Getting Started\n\n")
+            f.write("```bash\n")
+            f.write("# Run the main program\n")
+            f.write("clyp run src/main.clyp\n\n")
+            f.write("# Run tests\n")
+            f.write("clyp run tests/test_main.clyp\n\n")
+            f.write("# Format code\n")
+            f.write("clyp format src/\n\n")
+            f.write("# Check project for errors\n")
+            f.write("clyp check .\n")
+            f.write("```\n\n")
+            f.write("## Project Structure\n\n")
+            f.write("```\n")
+            f.write(f"{project_name}/\n")
+            f.write("├── clyp.json          # Project configuration\n")
+            f.write("├── src/               # Source code\n")
+            f.write("│   └── main.clyp      # Main entry point\n")
+            f.write("├── tests/             # Test files\n")
+            f.write("│   └── test_main.clyp # Example test\n")
+            f.write("├── README.md          # This file\n")
+            f.write("└── .gitignore         # Git ignore rules\n")
+            f.write("```\n")
+        
+        Log.success(f"Initialized comprehensive Clyp project '{project_name}'")
         Log.info(f"Created project structure in: {project_root}")
-        Log.info("You can now `cd` into the directory and run `clyp <file.clyp>`. Interpreted mode is default.")
+        Log.info("Project includes:")
+        Log.info("  • Enhanced clyp.json with metadata, scripts, and build config")
+        Log.info("  • Source directory with main.clyp")
+        Log.info("  • Tests directory with example test")
+        Log.info("  • README.md with getting started guide")
+        Log.info("  • Comprehensive .gitignore")
+        Log.info(f"Run 'cd {project_name} && clyp run src/main.clyp' to get started!")
     elif args.command == "format":
         file_path = os.path.abspath(args.file)
         try:
@@ -747,20 +1033,95 @@ def main():
         if args.file:
             print_deps(args.file)
         else:
-            # Try to find entry from clyp.json
-            config_path = os.path.join(os.getcwd(), "clyp.json")
-            if os.path.exists(config_path):
-                with open(config_path, "r") as f:
-                    config = json.load(f)
+            # Try to find entry from clyp.json with enhanced config loading
+            config = get_project_config()
+            if config:
                 entry = config.get("entry")
                 if entry:
-                    print_deps(entry)
+                    entry_path = resolve_config_path(entry, config)
+                    if os.path.exists(entry_path):
+                        print_deps(entry_path)
+                    else:
+                        Log.error(f"Entry file '{entry}' not found at {entry_path}")
+                        sys.exit(1)
                 else:
                     Log.error("No entry found in clyp.json.")
-                Log.info("💡 Tip: Add an 'entry' field to your clyp.json file, e.g., \"entry\": \"src/main.clyp\"", file=sys.stderr)
+                    Log.info("💡 Tip: Add an 'entry' field to your clyp.json file, e.g., \"entry\": \"src/main.clyp\"", file=sys.stderr)
+                    sys.exit(1)
             else:
                 Log.error("No file specified and no clyp.json found.")
                 Log.info("💡 Tip: Either specify a file (clyp deps main.clyp) or run from a Clyp project directory", file=sys.stderr)
+                sys.exit(1)
+    elif args.command == "script":
+        # Run a script from clyp.json
+        config = get_project_config()
+        if not config:
+            Log.error("No clyp.json found in current directory or parent directories.")
+            Log.info("💡 Tip: Run 'clyp init <project-name>' to create a new project", file=sys.stderr)
+            sys.exit(1)
+        
+        if not run_project_script(args.name, config):
+            sys.exit(1)
+    elif args.command == "config":
+        # Show or validate clyp.json configuration
+        config = get_project_config()
+        if not config:
+            Log.error("No clyp.json found in current directory or parent directories.")
+            sys.exit(1)
+        
+        if args.validate:
+            Log.success("clyp.json is valid")
+            # Additional validations
+            entry = config.get("entry")
+            if entry:
+                entry_path = resolve_config_path(entry, config)
+                if not os.path.exists(entry_path):
+                    Log.warn(f"Entry file '{entry}' does not exist")
+                else:
+                    Log.success(f"Entry file '{entry}' exists")
+            
+            # Validate scripts
+            scripts = config.get("scripts", {})
+            if scripts:
+                Log.info(f"Found {len(scripts)} script(s): {', '.join(scripts.keys())}")
+            
+            # Validate dependencies
+            deps = config.get("dependencies", {})
+            dev_deps = config.get("devDependencies", {})
+            if deps:
+                Log.info(f"Found {len(deps)} dependenc(ies)")
+            if dev_deps:
+                Log.info(f"Found {len(dev_deps)} dev dependenc(ies)")
+                
+        if args.show or not (args.validate):
+            print(json.dumps(config, indent=2))
+    elif args.command == "add":
+        # Add a dependency to clyp.json
+        config_path = find_config_file()
+        if not config_path:
+            Log.error("No clyp.json found in current directory or parent directories.")
+            Log.info("💡 Tip: Run 'clyp init <project-name>' to create a new project", file=sys.stderr)
+            sys.exit(1)
+        
+        config = load_clyp_config(config_path)
+        if not config:
+            sys.exit(1)
+        
+        if not add_dependency(args.dependency, config, config_path, args.dev):
+            sys.exit(1)
+    elif args.command == "remove":
+        # Remove a dependency from clyp.json
+        config_path = find_config_file()
+        if not config_path:
+            Log.error("No clyp.json found in current directory or parent directories.")
+            sys.exit(1)
+        
+        config = load_clyp_config(config_path)
+        if not config:
+            sys.exit(1)
+        
+        if not remove_dependency(args.dependency, config, config_path, args.dev):
+            sys.exit(1)
     else:
         parser.print_help()
 
