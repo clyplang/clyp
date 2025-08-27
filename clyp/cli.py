@@ -216,6 +216,46 @@ def extract_optimization_level(clyp_code: str) -> int:
 VERBOSE = False
 
 # Clyp.json configuration handling
+def parse_json5(content: str) -> Dict[str, Any]:
+    """Parse JSON5 format (JSON with comments and trailing commas)."""
+    import re
+    
+    # Remove line comments (// ...) but preserve them in strings
+    lines = content.split('\n')
+    processed_lines = []
+    for line in lines:
+        # Simple check - if we're not in a string, remove comments
+        in_string = False
+        escaped = False
+        comment_pos = len(line)
+        
+        for i, char in enumerate(line):
+            if escaped:
+                escaped = False
+                continue
+            if char == '\\':
+                escaped = True
+                continue
+            if char == '"' and not escaped:
+                in_string = not in_string
+                continue
+            if not in_string and char == '/' and i + 1 < len(line) and line[i + 1] == '/':
+                comment_pos = i
+                break
+        
+        processed_lines.append(line[:comment_pos].rstrip())
+    
+    content = '\n'.join(processed_lines)
+    
+    # Remove block comments
+    content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+    
+    # Remove trailing commas (but be careful with arrays/objects)
+    content = re.sub(r',(\s*[}\]])', r'\1', content)
+    
+    # Parse as regular JSON
+    return json.loads(content)
+
 def load_clyp_config(config_path: str) -> Optional[Dict[str, Any]]:
     """Load and validate clyp.json configuration file."""
     try:
@@ -223,7 +263,19 @@ def load_clyp_config(config_path: str) -> Optional[Dict[str, Any]]:
             return None
         
         with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
+            content = f.read()
+        
+        # Try JSON5 parsing first, fall back to regular JSON
+        try:
+            config = parse_json5(content)
+        except json.JSONDecodeError:
+            try:
+                config = json.loads(content)
+            except json.JSONDecodeError as e:
+                Log.error(f"[V100] Invalid JSON in clyp.json: {e}")
+                Log.info("💡 Tip: Check for syntax errors like missing commas or quotes", file=sys.stderr)
+                Log.info("💡 Note: clyp.json supports JSON5 format (comments and trailing commas)", file=sys.stderr)
+                return None
         
         # Basic validation
         if not isinstance(config, dict):
@@ -240,10 +292,6 @@ def load_clyp_config(config_path: str) -> Optional[Dict[str, Any]]:
             
         return config
         
-    except json.JSONDecodeError as e:
-        Log.error(f"[V100] Invalid JSON in clyp.json: {e}")
-        Log.info("💡 Tip: Check for syntax errors like missing commas or quotes", file=sys.stderr)
-        return None
     except Exception as e:
         code = get_error_code(e)
         Log.error(f"[{code}] Error reading clyp.json: {e}")
@@ -681,8 +729,80 @@ def main():
         }
         
         config_path = os.path.join(project_root, "clyp.json")
+        
+        # Save with JSON5-style comments for better documentation
+        config_content = """{
+  // JSON schema for IDE support and validation
+  "$schema": "https://clyplang.org/schemas/clyp-project.json",
+  
+  // Basic project metadata
+  "name": \"""" + project_name + """\",
+  "version": "0.1.0",
+  "description": "A new Clyp project: """ + project_name + """\",
+  "entry": "src/main.clyp",
+  
+  // Author information
+  "author": {
+    "name": "Your Name",
+    "email": "you@example.com"
+  },
+  
+  // Project classification
+  "license": "MIT",
+  "keywords": ["clyp", "project"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/""" + project_name + """.git"
+  },
+  
+  // Package dependencies (use 'clyp add <package>' to manage)
+  "dependencies": {},
+  "devDependencies": {},
+  
+  // Custom scripts (run with 'clyp script <name>')
+  "scripts": {
+    "build": "python -m clyp.cli check .",
+    "test": "python -m clyp.cli run tests/test_main.clyp",
+    "format": "python -m clyp.cli format src/",
+    "clean": "rm -rf build/ dist/ .clyp-cache/"
+  },
+  
+  // Build configuration
+  "build": {
+    "optimization": 0,        // Optimization level: 0 (debug), 1 (balanced), 2 (release)
+    "outputDir": "build",     // Output directory for compiled files
+    "transpileOnly": false,   // Skip type checking and just transpile
+    "sourceMap": true         // Generate source maps for debugging
+  },
+  
+  // Import path aliases
+  "imports": {
+    "paths": {
+      "@src/*": ["src/*"],
+      "@lib/*": ["lib/*"],
+      "@tests/*": ["tests/*"]
+    }
+  },
+  
+  // Development tool configuration
+  "tools": {
+    "formatter": {
+      "lineLength": 88,
+      "indentSize": 4,
+      "useTabs": false
+    },
+    "linter": {
+      "strict": false,
+      "rules": {
+        "requireReturnTypes": true,
+        "enforceNamingConventions": true
+      }
+    }
+  }
+}"""
+        
         with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
+            f.write(config_content)
         
         src_dir = os.path.join(project_root, "src")
         os.makedirs(src_dir)
