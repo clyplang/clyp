@@ -283,7 +283,7 @@ def main():
     # Add global verbose flag
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output.")
     parser.add_argument("--version", action="store_true", help="Display the version of Clyp.")
-    subparsers = parser.add_subparsers(dest="command", help=argparse.SUPPRESS)
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
     # Only keep run, format, py2clyp, check, deps, init commands
     run_parser = subparsers.add_parser("run", help="Run a Clyp file (interpreted mode).")
     run_parser.add_argument("file", type=str, help="Path to the Clyp file to execute.")
