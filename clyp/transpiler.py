@@ -20,7 +20,7 @@ from clyp.ErrorHandling import ClypSyntaxError
 def _replace_keywords_outside_strings(line: str) -> str:
     """
     Replaces specific Clyp keywords with Python equivalents outside of string literals.
-    Replaces 'unless' -> 'if not', 'is not' -> '!=', 'is' -> '=='.
+    Replaces 'unless' -> 'if not', 'is not' -> '!=', 'is' -> '==', 'else if' -> 'elif'.
     """
     # Split on simple single/double quoted strings (won't capture triple-quote groups inside)
     parts = re.split(r'(".*?"|\'.*?\')', line)
@@ -29,6 +29,7 @@ def _replace_keywords_outside_strings(line: str) -> str:
         part = re.sub(r"\bunless\b", "if not", part)
         part = re.sub(r"\bis not\b", "!=", part)
         part = re.sub(r"\bis\b", "==", part)
+        part = re.sub(r"\belse\s+if\b", "elif", part)  # Add else if -> elif transformation
         parts[i] = part
     return "".join(parts)
 
@@ -106,8 +107,11 @@ def transpile_to_clyp(python_code: str) -> str:
                     args.append(f"{arg_type} {arg.arg}")
                 else:
                     args.append(arg.arg)
-            returns = ast.unparse(node.returns) if node.returns else "any"
-            self.emit(f"function {node.name}({', '.join(args)}) returns {returns} {{")
+            returns = ast.unparse(node.returns) if node.returns else None
+            if returns:
+                self.emit(f"function {node.name}({', '.join(args)}) returns {returns} {{")
+            else:
+                self.emit(f"function {node.name}({', '.join(args)}) {{")  # No returns clause
             self.indent += 1
             for stmt in node.body:
                 self.visit(stmt)
@@ -489,6 +493,14 @@ def parse_clyp(
                 raise ClypSyntaxError(f"Invalid include statement: {stripped_line}")
             continue
 
+        # Check for invalid "clyp import" syntax
+        if stripped_line.startswith("clyp import "):
+            raise ClypSyntaxError(f"Invalid syntax: {stripped_line}. Use 'import' instead of 'clyp import'.")
+
+        # Check for invalid "clyp from" syntax
+        if stripped_line.startswith("clyp from "):
+            raise ClypSyntaxError(f"Invalid syntax: {stripped_line}. Use 'from' instead of 'clyp from'.")
+
         processed_import_lines.append(line)
     infile_str_raw = "\n".join(processed_import_lines)
 
@@ -617,15 +629,19 @@ def parse_clyp(
                 continue
 
         # class member declaration -> annotation (e.g., "int count = 0" -> "count: int = 0")
+        # Exclude statements that start with Python keywords like 'return', 'if', 'for', etc.
         class_field_match = re.match(r"^([a-zA-Z_][\w]*)\s+([a-zA-Z_][\w]*)(\s*=\s*.+)?;?$", stripped_line)
-        if in_class_block and class_field_match:
+        if (in_class_block and class_field_match and 
+            not stripped_line.startswith(('return', 'if', 'for', 'while', 'try', 'except', 'finally', 'with', 'assert', 'del', 'global', 'nonlocal', 'pass', 'break', 'continue', 'raise', 'yield', 'await'))):
             typ, name, default = class_field_match.groups()
             default = default.strip() if default else ""
             if default:
                 default = default.lstrip("= ").strip()
-                outfile_line = f"{name}: {typ} = {default}"
+                # Keep Clyp-style "type name = value" format for consistency
+                outfile_line = f"{typ} {name} = {default}"
             else:
-                outfile_line = f"{name}: {typ}"
+                # Keep Clyp-style "type name" format for consistency
+                outfile_line = f"{typ} {name}"
             infile_str_indented += indentation_sign * indentation_level + outfile_line + add_comment + "\n"
             line_map[py_line_num] = clyp_line_num
             py_line_num += 1
@@ -756,8 +772,8 @@ def parse_clyp(
             py_line_num += 1
             continue
 
-        # else if -> elif
-        indented_line = re.sub(r"^\s*else\s+if\b", lambda m: m.group(0).replace("else if", "elif"), indented_line, flags=re.IGNORECASE)
+        # else if -> elif (handle both start of line and middle of line)
+        indented_line = re.sub(r"\belse\s+if\b", "elif", indented_line, flags=re.IGNORECASE)
 
         # strip stray semicolons at end of line
         if indented_line.rstrip().endswith(";"):
