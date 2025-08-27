@@ -279,20 +279,30 @@ def resolve_import_path(import_name, current_file_path):
 def main():
     import argparse
     # print(sys.argv)  # (optional: remove debug print)
-    parser = argparse.ArgumentParser(description="Clyp CLI tool (interpreted mode only).")
+    parser = argparse.ArgumentParser(
+        description="Clyp CLI tool (interpreted mode only).",
+        epilog="Examples:\n"
+        "  clyp run hello.clyp          # Run a Clyp file\n"
+        "  clyp init my-project         # Create a new Clyp project\n"
+        "  clyp format main.clyp        # Format Clyp code\n"
+        "  clyp py2clyp script.py       # Convert Python to Clyp\n"
+        "  clyp check .                 # Check project for errors\n"
+        "  clyp deps main.clyp          # Show dependency tree",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     # Add global verbose flag
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output.")
     parser.add_argument("--version", action="store_true", help="Display the version of Clyp.")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
     # Only keep run, format, py2clyp, check, deps, init commands
-    run_parser = subparsers.add_parser("run", help="Run a Clyp file (interpreted mode).")
+    run_parser = subparsers.add_parser("run", help="Run a Clyp file (interpreted mode). Example: clyp run hello.clyp")
     run_parser.add_argument("file", type=str, help="Path to the Clyp file to execute.")
     run_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments to pass to the Clyp script.")
-    format_parser = subparsers.add_parser("format", help="Format a Clyp file (overwrites by default).")
+    format_parser = subparsers.add_parser("format", help="Format a Clyp file (overwrites by default). Example: clyp format main.clyp")
     format_parser.add_argument("file", type=str, help="Path to the Clyp file to format.")
     format_parser.add_argument("--print", action="store_true", help="Print formatted code instead of overwriting.")
     format_parser.add_argument("--no-write", action="store_true", help="Do not overwrite the file (alias for --print).")
-    py2clyp_parser = subparsers.add_parser("py2clyp", help="Transpile Python code to Clyp with advanced options.")
+    py2clyp_parser = subparsers.add_parser("py2clyp", help="Transpile Python code to Clyp. Example: clyp py2clyp script.py")
     py2clyp_parser.add_argument("file", type=str, help="Path to the Python file to transpile.")
     py2clyp_parser.add_argument("-o", "--output", type=str, default=None, help="Output file for Clyp code.")
     py2clyp_parser.add_argument("--print", action="store_true", help="Print transpiled Clyp code to stdout.")
@@ -304,11 +314,11 @@ def main():
     py2clyp_parser.add_argument("--no-format", action="store_true", help="Do not format the output.")
     py2clyp_parser.add_argument("--stats", action="store_true", help="Show statistics about the transpilation (lines, tokens, etc.).")
     py2clyp_parser.add_argument("-r", "--recursive", action="store_true", help="Recursively transpile a directory of Python files.")
-    check_parser = subparsers.add_parser("check", help="Check a Clyp file or project for syntax errors.")
+    check_parser = subparsers.add_parser("check", help="Check a Clyp file or project for syntax errors. Example: clyp check main.clyp")
     check_parser.add_argument("file", type=str, nargs="?", default=None, help="Clyp file or project to check. If omitted, checks the project in the current directory.")
-    deps_parser = subparsers.add_parser("deps", help="Show the dependency tree for a Clyp file or project.")
+    deps_parser = subparsers.add_parser("deps", help="Show the dependency tree for a Clyp file or project. Example: clyp deps main.clyp")
     deps_parser.add_argument("file", type=str, nargs="?", default=None, help="Clyp file or project to analyze.")
-    init_parser = subparsers.add_parser("init", help="Initialize a new Clyp project.")
+    init_parser = subparsers.add_parser("init", help="Initialize a new Clyp project. Example: clyp init my-project")
     init_parser.add_argument("name", type=str, help="The name of the project.")
     args = parser.parse_args()
     # ... existing code ...
@@ -331,10 +341,13 @@ def main():
         except FileNotFoundError as e:
             code = get_error_code(e)
             Log.error(f"[{code}] File {args.file} not found.", file=sys.stderr)
+            Log.info("💡 Tip: Check the file path and make sure the file exists.", file=sys.stderr)
             sys.exit(1)
         except (IOError, UnicodeDecodeError) as e:
             code = get_error_code(e)
             Log.error(f"[{code}] Error reading file {args.file}: {e}", file=sys.stderr)
+            if isinstance(e, UnicodeDecodeError):
+                Log.info("💡 Tip: Make sure the file is saved with UTF-8 encoding.", file=sys.stderr)
             sys.exit(1)
         except Exception as e:
             code = get_error_code(e)
@@ -438,11 +451,37 @@ def main():
         os.makedirs(src_dir)
         main_clyp_path = os.path.join(src_dir, "main.clyp")
         with open(main_clyp_path, "w") as f:
+            f.write('# Welcome to Clyp!\n')
+            f.write('# This is a simple Hello World program\n')
+            f.write('\n')
             f.write('print("Hello from Clyp!")\n')
+            f.write('\n')
+            f.write('# Try defining a function:\n')
+            f.write('# function greet(str name) returns str {\n')
+            f.write('#     return "Hello, " + name + "!";\n')
+            f.write('# }\n')
+            f.write('# print(greet("World"));\n')
         gitignore_path = os.path.join(project_root, ".gitignore")
         with open(gitignore_path, "w") as f:
+            f.write("# Build outputs\n")
+            f.write("build/\n")
             f.write("dist/\n")
             f.write(".clyp-cache/\n")
+            f.write("\n")
+            f.write("# Python bytecode\n")
+            f.write("__pycache__/\n")
+            f.write("*.pyc\n")
+            f.write("*.pyo\n")
+            f.write("\n")
+            f.write("# IDE files\n")
+            f.write(".vscode/\n")
+            f.write(".idea/\n")
+            f.write("*.swp\n")
+            f.write("*.swo\n")
+            f.write("\n")
+            f.write("# OS files\n")
+            f.write(".DS_Store\n")
+            f.write("Thumbs.db\n")
         Log.success(f"Initialized Clyp project '{project_name}'")
         Log.info(f"Created project structure in: {project_root}")
         Log.info("You can now `cd` into the directory and run `clyp <file.clyp>`. Interpreted mode is default.")
@@ -718,8 +757,10 @@ def main():
                     print_deps(entry)
                 else:
                     Log.error("No entry found in clyp.json.")
+                Log.info("💡 Tip: Add an 'entry' field to your clyp.json file, e.g., \"entry\": \"src/main.clyp\"", file=sys.stderr)
             else:
                 Log.error("No file specified and no clyp.json found.")
+                Log.info("💡 Tip: Either specify a file (clyp deps main.clyp) or run from a Clyp project directory", file=sys.stderr)
     else:
         parser.print_help()
 
