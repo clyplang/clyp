@@ -70,7 +70,13 @@ def _resolve_clyp_module_path(
             for part in parts:
                 check_dir = check_dir / part
                 if not (check_dir / "__init__.clyp").exists():
-                    raise ClypSyntaxError(f"[E100] Parent directory missing __init__.clyp for package '{module_name}'", -1, -1)
+                    raise ClypSyntaxError(
+                        f"[E103] Parent directory missing __init__.clyp for package '{module_name}'\n"
+                        "💡 Tip: Each package directory must contain an __init__.clyp file\n"
+                        f"💡 Missing file: {check_dir / '__init__.clyp'}\n"
+                        "💡 Create an empty __init__.clyp file if no initialization is needed", 
+                        -1, -1
+                    )
             return init_file
     return None
 
@@ -399,7 +405,12 @@ def parse_clyp(
         if stripped_line.startswith("import "):
             parts = stripped_line.split()
             if len(parts) != 2:
-                raise ClypSyntaxError(f"Invalid import statement: {stripped_line}")
+                raise ClypSyntaxError(
+                    f"[E100] Invalid import statement: {stripped_line}\n"
+                    "💡 Tip: Use 'import <module>' or 'from <module> import <name>'\n"
+                    "💡 Example: import mymodule\n"
+                    "💡 Example: from mymodule import myfunction"
+                )
             module_name = parts[1]
 
             # Special-case: map short std aliases to clyp.std.<module> if listed in clyp.std.std_list
@@ -432,7 +443,10 @@ def parse_clyp(
                 processed_import_lines.append(f"{module_name} = clyp_import('{module_name}', {repr(file_path)})")
             else:
                 raise ClypSyntaxError(
-                    f"Cannot import Clyp module '{module_name}': not a Clyp package or single-file script."
+                    f"[E101] Cannot import Clyp module '{module_name}': not a Clyp package or single-file script.\n"
+                    "💡 Tip: Check that the module file exists and has .clyp extension\n"
+                    "💡 Tip: For packages, ensure the directory contains __init__.clyp\n"
+                    f"💡 Searched in: {base_dir if file_path else 'current directory'}"
                 )
             continue
 
@@ -477,10 +491,18 @@ def parse_clyp(
                     processed_import_lines.append("del _temp_module")
                 else:
                     raise ClypSyntaxError(
-                        f"Cannot import from Clyp module '{module_name}': not a Clyp package or single-file script."
+                        f"[E102] Cannot import from Clyp module '{module_name}': not a Clyp package or single-file script.\n"
+                        "💡 Tip: Check that the module file exists and has .clyp extension\n"
+                        "💡 Tip: Verify that the exported names exist in the target module\n"
+                        f"💡 Attempted to import: {', '.join(imported_names)}"
                     )
             else:
-                raise ClypSyntaxError(f"Invalid from-import statement: {stripped_line}")
+                raise ClypSyntaxError(
+                    f"[A102] Invalid from-import statement: {stripped_line}\n"
+                    "💡 Tip: Use syntax 'from module import name1, name2'\n"
+                    "💡 Example: from math import sin, cos\n"
+                    "💡 Check for proper spacing and commas between imported names"
+                )
             continue
 
         # include stays the same
@@ -490,16 +512,29 @@ def parse_clyp(
                 clb_path = match.group(1)
                 processed_import_lines.append(f'clyp_include(r"{clb_path}", r"{file_path}")')
             else:
-                raise ClypSyntaxError(f"Invalid include statement: {stripped_line}")
+                raise ClypSyntaxError(
+                    f"[A103] Invalid include statement: {stripped_line}\n"
+                    "💡 Tip: Use syntax 'include \"filename.clb\"'\n"
+                    "💡 Example: include \"mylib.clb\"\n"
+                    "💡 Ensure the filename is in double quotes and has .clb extension"
+                )
             continue
 
         # Check for invalid "clyp import" syntax
         if stripped_line.startswith("clyp import "):
-            raise ClypSyntaxError(f"Invalid syntax: {stripped_line}. Use 'import' instead of 'clyp import'.")
+            raise ClypSyntaxError(
+                f"[A104] Invalid syntax: {stripped_line}\n"
+                "💡 Tip: Use 'import' instead of 'clyp import'\n"
+                "💡 Correct syntax: import module_name"
+            )
 
         # Check for invalid "clyp from" syntax
         if stripped_line.startswith("clyp from "):
-            raise ClypSyntaxError(f"Invalid syntax: {stripped_line}. Use 'from' instead of 'clyp from'.")
+            raise ClypSyntaxError(
+                f"[A105] Invalid syntax: {stripped_line}\n"
+                "💡 Tip: Use 'from' instead of 'clyp from'\n"
+                "💡 Correct syntax: from module import name"
+            )
 
         processed_import_lines.append(line)
     infile_str_raw = "\n".join(processed_import_lines)
@@ -680,7 +715,10 @@ def parse_clyp(
                         new_args.append(parts[0])
                     else:
                         raise ClypSyntaxError(
-                            f"Argument '{arg}' in method definition is malformed. Found in line: {stripped_line}"
+                            f"[A106] Argument '{arg}' in method definition is malformed.\n"
+                            "💡 Tip: Use format 'type name' or 'type name = default_value'\n"
+                            "💡 Example: int count, str name = \"default\"\n"
+                            f"💡 Found in line: {stripped_line}"
                         )
             new_args_str = ", ".join(new_args)
             # map Clyp 'null' -> Python 'None' in return type if present
@@ -723,7 +761,10 @@ def parse_clyp(
                         new_args.append(parts[0])
                     else:
                         raise ClypSyntaxError(
-                            f"Argument '{arg}' in function definition must be in 'type name' format. Found in line: {stripped_line}"
+                            f"[A107] Argument '{arg}' in function definition must be in 'type name' format.\n"
+                            "💡 Tip: Specify both type and name for each parameter\n"
+                            "💡 Example: function myFunc(int x, str name) returns bool\n"
+                            f"💡 Found in line: {stripped_line}"
                         )
             new_args_str = ", ".join(new_args)
             py_return_type = "None" if return_type == "null" else return_type

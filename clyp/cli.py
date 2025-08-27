@@ -196,21 +196,7 @@ def get_clyp_line_for_py(
         return len(clyp_lines), clyp_lines[-1]
     return "?", ""
 
-def extract_optimization_level(clyp_code: str) -> int:
-    """
-    Extracts the optimization level from a line like:
-    define optimization_level <level>;
-    Returns 0 if not found or invalid.
-    """
-    match = re.search(r"define\s+optimization_level\s+(\d+)\s*;", clyp_code)
-    if match:
-        try:
-            level = int(match.group(1))
-            if level in (0, 1, 2):
-                return level
-        except Exception:
-            pass
-    return 0
+
 
 # Add global verbose flag
 VERBOSE = False
@@ -676,7 +662,6 @@ def main():
         
         # Enhanced clyp.json with comprehensive metadata
         config = {
-            "$schema": "https://clyplang.org/schemas/clyp-project.json",
             "name": project_name,
             "version": "0.1.0",
             "description": f"A new Clyp project: {project_name}",
@@ -700,7 +685,6 @@ def main():
                 "clean": "rm -rf build/ dist/ .clyp-cache/"
             },
             "build": {
-                "optimization": 0,
                 "outputDir": "build",
                 "transpileOnly": False,
                 "sourceMap": True
@@ -732,9 +716,6 @@ def main():
         
         # Save with JSON5-style comments for better documentation
         config_content = """{
-  // JSON schema for IDE support and validation
-  "$schema": "https://clyplang.org/schemas/clyp-project.json",
-  
   // Basic project metadata
   "name": \"""" + project_name + """\",
   "version": "0.1.0",
@@ -769,7 +750,6 @@ def main():
   
   // Build configuration
   "build": {
-    "optimization": 0,        // Optimization level: 0 (debug), 1 (balanced), 2 (release)
     "outputDir": "build",     // Output directory for compiled files
     "transpileOnly": false,   // Skip type checking and just transpile
     "sourceMap": true         // Generate source maps for debugging
