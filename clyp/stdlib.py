@@ -1,6 +1,8 @@
 import json
 import requests
 import re
+import random
+import math
 from typing import Any, Callable, Dict, Tuple, List, Union
 from typeguard import typechecked
 from clyp.ErrorHandling import ClypRuntimeError
@@ -542,3 +544,343 @@ def random_choice_weighted(choices: List[Tuple[Any, float]]) -> Any:
             return item
 
     return None
+
+
+@typechecked
+def debug(value: Any, label: str = "") -> Any:
+    """
+    Debug utility that prints value with optional label and returns the value.
+    
+    :param value: Value to debug
+    :param label: Optional label for the debug output
+    :return: The original value unchanged
+    """
+    import inspect
+    import pprint
+    
+    frame = inspect.currentframe().f_back
+    filename = frame.f_code.co_filename
+    line_number = frame.f_lineno
+    
+    prefix = f"[DEBUG {filename}:{line_number}]"
+    if label:
+        prefix += f" {label}:"
+    
+    if isinstance(value, (dict, list, tuple, set)):
+        print(f"{prefix}")
+        pprint.pprint(value, width=120, depth=10)
+    else:
+        print(f"{prefix} {repr(value)}")
+    
+    return value
+
+
+@typechecked
+def profile(func: Callable[..., Any]) -> Callable[..., Any]:
+    """
+    Decorator to profile function execution time and memory usage.
+    
+    :param func: Function to profile
+    :return: Wrapped function with profiling
+    """
+    import time
+    import tracemalloc
+    from functools import wraps
+    
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Start memory tracing
+        tracemalloc.start()
+        start_time = time.perf_counter()
+        
+        try:
+            result = func(*args, **kwargs)
+        finally:
+            end_time = time.perf_counter()
+            current, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            
+            execution_time = end_time - start_time
+            print(f"[PROFILE] {func.__name__}:")
+            print(f"  Execution time: {execution_time:.4f}s")
+            print(f"  Memory usage: {current / 1024 / 1024:.2f} MB")
+            print(f"  Peak memory: {peak / 1024 / 1024:.2f} MB")
+        
+        return result
+    
+    return wrapper
+
+
+@typechecked
+def json_parse(json_str: str) -> Union[Dict[str, Any], List[Any], str, int, float, bool, None]:
+    """
+    Parse JSON string to Python object with enhanced error reporting.
+    
+    :param json_str: JSON string to parse
+    :return: Parsed JSON object
+    :raises ClypRuntimeError: If JSON parsing fails
+    """
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ClypRuntimeError(
+            f"[V200] JSON parsing failed: {e}\n"
+            f"💡 Tip: Check for missing quotes, trailing commas, or malformed structure\n"
+            f"💡 Position: line {e.lineno}, column {e.colno}\n"
+            f"💡 Context: {json_str[max(0, e.pos-20):e.pos+20]}"
+        )
+
+
+@typechecked
+def json_stringify(obj: Any, pretty: bool = False) -> str:
+    """
+    Convert Python object to JSON string.
+    
+    :param obj: Object to convert to JSON
+    :param pretty: Whether to format with indentation
+    :return: JSON string
+    """
+    try:
+        if pretty:
+            return json.dumps(obj, indent=2, ensure_ascii=False, default=str)
+        return json.dumps(obj, ensure_ascii=False, default=str)
+    except (TypeError, ValueError) as e:
+        raise ClypRuntimeError(f"[V201] Failed to serialize to JSON: {e}")
+
+
+@typechecked
+def deep_merge(dict1: Dict[str, Any], dict2: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Deep merge two dictionaries, with dict2 values taking precedence.
+    
+    :param dict1: First dictionary
+    :param dict2: Second dictionary (takes precedence)
+    :return: Merged dictionary
+    """
+    result = dict1.copy()
+    
+    for key, value in dict2.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    
+    return result
+
+
+@typechecked
+def get_nested(obj: Union[Dict[str, Any], None], path: str, default: Any = None) -> Any:
+    """
+    Get nested value from dictionary using dot notation.
+    
+    :param obj: Dictionary to search
+    :param path: Dot-separated path (e.g., "user.profile.name")
+    :param default: Default value if path not found
+    :return: Value at path or default
+    """
+    keys = path.split('.')
+    current = obj
+    
+    try:
+        for key in keys:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return default
+        return current
+    except (KeyError, TypeError):
+        return default
+
+
+@typechecked
+def set_nested(obj: Dict[str, Any], path: str, value: Any) -> Dict[str, Any]:
+    """
+    Set nested value in dictionary using dot notation.
+    
+    :param obj: Dictionary to modify
+    :param path: Dot-separated path (e.g., "user.profile.name")
+    :param value: Value to set
+    :return: Modified dictionary
+    """
+    keys = path.split('.')
+    current = obj
+    
+    for key in keys[:-1]:
+        if key not in current or not isinstance(current[key], dict):
+            current[key] = {}
+        current = current[key]
+    
+    current[keys[-1]] = value
+    return obj
+
+
+@typechecked
+def clamp(value: Union[int, float], min_val: Union[int, float], max_val: Union[int, float]) -> Union[int, float]:
+    """
+    Clamp value between min and max bounds.
+    
+    :param value: Value to clamp
+    :param min_val: Minimum value
+    :param max_val: Maximum value
+    :return: Clamped value
+    """
+    return max(min_val, min(value, max_val))
+
+
+@typechecked
+def lerp(start: Union[int, float], end: Union[int, float], t: float) -> float:
+    """
+    Linear interpolation between two values.
+    
+    :param start: Start value
+    :param end: End value  
+    :param t: Interpolation factor (0.0 to 1.0)
+    :return: Interpolated value
+    """
+    return start + t * (end - start)
+
+
+@typechecked
+def unique(items: List[Any]) -> List[Any]:
+    """
+    Get unique items from list while preserving order.
+    
+    :param items: List of items
+    :return: List with unique items
+    """
+    seen = set()
+    result = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+@typechecked
+def group_by(items: List[Any], key_func: Callable[[Any], Any]) -> Dict[Any, List[Any]]:
+    """
+    Group list items by key function result.
+    
+    :param items: List of items to group
+    :param key_func: Function to extract grouping key
+    :return: Dictionary of grouped items
+    """
+    groups = {}
+    for item in items:
+        key = key_func(item)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(item)
+    return groups
+
+
+@typechecked
+def partition(items: List[Any], predicate: Callable[[Any], bool]) -> Tuple[List[Any], List[Any]]:
+    """
+    Partition list into two lists based on predicate.
+    
+    :param items: List of items to partition
+    :param predicate: Function to test items
+    :return: Tuple of (items matching predicate, items not matching)
+    """
+    true_items = []
+    false_items = []
+    
+    for item in items:
+        if predicate(item):
+            true_items.append(item)
+        else:
+            false_items.append(item)
+    
+    return true_items, false_items
+
+
+@typechecked
+def zip_dict(keys: List[Any], values: List[Any]) -> Dict[Any, Any]:
+    """
+    Create dictionary from two lists of keys and values.
+    
+    :param keys: List of keys
+    :param values: List of values
+    :return: Dictionary mapping keys to values
+    """
+    return dict(zip(keys, values))
+
+
+@typechecked
+def pick(obj: Dict[str, Any], keys: List[str]) -> Dict[str, Any]:
+    """
+    Create new dictionary with only specified keys.
+    
+    :param obj: Source dictionary
+    :param keys: Keys to pick
+    :return: New dictionary with picked keys
+    """
+    return {key: obj[key] for key in keys if key in obj}
+
+
+@typechecked
+def omit(obj: Dict[str, Any], keys: List[str]) -> Dict[str, Any]:
+    """
+    Create new dictionary excluding specified keys.
+    
+    :param obj: Source dictionary
+    :param keys: Keys to omit
+    :return: New dictionary without omitted keys
+    """
+    return {key: value for key, value in obj.items() if key not in keys}
+
+
+@typechecked
+def format_bytes(size: Union[int, float]) -> str:
+    """
+    Format byte size as human readable string.
+    
+    :param size: Size in bytes
+    :return: Formatted string (e.g., "1.5 MB")
+    """
+    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+    
+    if size == 0:
+        return "0 B"
+    
+    import math
+    unit_index = min(int(math.log(abs(size), 1024)), len(units) - 1)
+    formatted_size = size / (1024 ** unit_index)
+    
+    if formatted_size.is_integer():
+        return f"{int(formatted_size)} {units[unit_index]}"
+    else:
+        return f"{formatted_size:.1f} {units[unit_index]}"
+
+
+@typechecked  
+def format_duration(seconds: Union[int, float]) -> str:
+    """
+    Format duration in seconds as human readable string.
+    
+    :param seconds: Duration in seconds
+    :return: Formatted string (e.g., "2h 30m 15s")
+    """
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    
+    minutes = int(seconds // 60)
+    remaining_seconds = seconds % 60
+    
+    if minutes < 60:
+        if remaining_seconds > 0:
+            return f"{minutes}m {remaining_seconds:.0f}s"
+        return f"{minutes}m"
+    
+    hours = int(minutes // 60)
+    remaining_minutes = minutes % 60
+    
+    parts = [f"{hours}h"]
+    if remaining_minutes > 0:
+        parts.append(f"{remaining_minutes}m")
+    if remaining_seconds > 0:
+        parts.append(f"{remaining_seconds:.0f}s")
+    
+    return " ".join(parts)

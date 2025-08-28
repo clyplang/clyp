@@ -21,16 +21,44 @@ def _replace_keywords_outside_strings(line: str) -> str:
     """
     Replaces specific Clyp keywords with Python equivalents outside of string literals.
     Replaces 'unless' -> 'if not', 'is not' -> '!=', 'is' -> '==', 'else if' -> 'elif'.
+    Also handles new Clyp syntax features like string interpolation, optional chaining, etc.
     """
     # Split on simple single/double quoted strings (won't capture triple-quote groups inside)
     parts = re.split(r'(".*?"|\'.*?\')', line)
+    
+    # Handle string interpolation in string parts (odd indices)
+    for i in range(1, len(parts), 2):
+        if parts[i].startswith('"') and parts[i].endswith('"'):
+            # Convert "Hello {name}" to f"Hello {name}"
+            if '{' in parts[i] and '}' in parts[i]:
+                parts[i] = 'f' + parts[i]
+        elif parts[i].startswith("'") and parts[i].endswith("'"):
+            # Convert 'Hello {name}' to f'Hello {name}'
+            if '{' in parts[i] and '}' in parts[i]:
+                parts[i] = 'f' + parts[i]
+    
+    # Handle code parts (even indices)
     for i in range(0, len(parts), 2):
         part = parts[i]
+        
+        # Original keyword replacements
         part = re.sub(r"\bunless\b", "if not", part)
         part = re.sub(r"\bis not\b", "!=", part)
         part = re.sub(r"\bis\b", "==", part)
-        part = re.sub(r"\belse\s+if\b", "elif", part)  # Add else if -> elif transformation
+        part = re.sub(r"\belse\s+if\b", "elif", part)
+        
+        # New language features
+        # Null coalescing: value ?? default -> value if value is not None else default
+        part = re.sub(r'(\w+)\s*\?\?\s*([^;,\)\]\}]+)', r'(\1 if \1 is not None else \2)', part)
+        
+        # Optional chaining: obj?.prop -> (obj.prop if obj is not None else None)
+        part = re.sub(r'(\w+)\?\\.(\w+)', r'(\1.\2 if \1 is not None else None)', part)
+        
+        # Range expressions: 1..10 -> range(1, 11), 1..<10 -> range(1, 10)
+        part = re.sub(r'(\d+)\.\.(<?)(\d+)', lambda m: f'range({m.group(1)}, {m.group(3)})' if m.group(2) else f'range({m.group(1)}, {int(m.group(3)) + 1})', part)
+        
         parts[i] = part
+    
     return "".join(parts)
 
 
@@ -283,6 +311,7 @@ def parse_clyp(
         "del gc\n"
         "import clyp\n"
         "from clyp.importer import clyp_import, clyp_include\n"
+        "from typing import Optional, Union\n"
     )
     if stdlib_imports:
         python_code += f"from clyp.stdlib import {stdlib_imports}\n"
@@ -650,6 +679,43 @@ def parse_clyp(
                 py_line_num += 1
                 continue
 
+        # Type aliases: type UserId = int
+        type_alias_match = re.match(r"^type\s+([a-zA-Z_][\w]*)\s*=\s*(.+);?", stripped_line)
+        if type_alias_match:
+            alias_name = type_alias_match.group(1)
+            alias_type = type_alias_match.group(2).strip()
+            infile_str_indented += indentation_sign * indentation_level + f"{alias_name} = {alias_type}" + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Enums: enum Status { Active, Inactive, Pending }
+        enum_match = re.match(r"^enum\s+([a-zA-Z_][\w]*)\s*\{([^}]*)\}", stripped_line)
+        if enum_match:
+            enum_name = enum_match.group(1)
+            enum_values_str = enum_match.group(2).strip()
+            enum_values = [v.strip() for v in enum_values_str.split(',') if v.strip()]
+            infile_str_indented += indentation_sign * indentation_level + f"from enum import Enum\n"
+            infile_str_indented += indentation_sign * indentation_level + f"class {enum_name}(Enum):" + add_comment + "\n"
+            indentation_level += 1
+            for i, value in enumerate(enum_values):
+                infile_str_indented += indentation_sign * indentation_level + f"{value} = {i + 1}\n"
+            indentation_level -= 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Multi-line enum declaration
+        enum_start_match = re.match(r"^enum\s+([a-zA-Z_][\w]*)\s*\{?", stripped_line)
+        if enum_start_match:
+            enum_name = enum_start_match.group(1)
+            infile_str_indented += indentation_sign * indentation_level + f"from enum import Enum" + "\n"
+            infile_str_indented += indentation_sign * indentation_level + f"class {enum_name}(Enum):" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
         # class declaration
         if stripped_line.startswith("class "):
             class_match = re.match(r"class\s+([a-zA-Z_][\w]*)\s*\{?", stripped_line)
@@ -682,6 +748,65 @@ def parse_clyp(
             py_line_num += 1
             continue
 
+        # Pattern Matching: match value when pattern => result
+        match_pattern = re.match(r"^match\s+([^{]+)\s*\{?", stripped_line)
+        if match_pattern:
+            match_value = match_pattern.group(1).strip()
+            infile_str_indented += indentation_sign * indentation_level + f"match {match_value}:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+            
+        # Pattern matching cases: when pattern => result
+        when_pattern = re.match(r"^when\s+([^=]+)=>\s*(.+)", stripped_line)
+        if when_pattern:
+            pattern = when_pattern.group(1).strip()
+            result = when_pattern.group(2).strip()
+            infile_str_indented += indentation_sign * indentation_level + f"case {pattern}:" + add_comment + "\n"
+            indentation_level += 1
+            infile_str_indented += indentation_sign * indentation_level + result + "\n"
+            indentation_level -= 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Switch expressions: switch value { case 1 => "one", case 2 => "two" }
+        switch_pattern = re.match(r"^switch\s+([^{]+)\s*\{?", stripped_line)
+        if switch_pattern:
+            switch_value = switch_pattern.group(1).strip()
+            infile_str_indented += indentation_sign * indentation_level + f"match {switch_value}:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Try/catch/finally blocks
+        try_pattern = re.match(r"^try\s*\{?", stripped_line)
+        if try_pattern:
+            infile_str_indented += indentation_sign * indentation_level + "try:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+            
+        catch_pattern = re.match(r"^catch\s*\(([^)]*)\)\s*\{?", stripped_line)
+        if catch_pattern:
+            exception_type = catch_pattern.group(1).strip() or "Exception"
+            infile_str_indented += indentation_sign * indentation_level + f"except {exception_type}:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+            
+        finally_pattern = re.match(r"^finally\s*\{?", stripped_line)
+        if finally_pattern:
+            infile_str_indented += indentation_sign * indentation_level + "finally:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
         # METHOD HEADER WITHOUT 'function' KEYWORD
         # e.g. increment(self) returns null:
         method_def_match = re.match(
@@ -705,9 +830,15 @@ def parse_clyp(
                     arg_type = parts[0]
                     arg_name = parts[1]
                     default_value = " ".join(parts[2:]) if len(parts) > 2 else ""
+                    
+                    # Handle optional types: int? -> Optional[int]
+                    if arg_type.endswith('?'):
+                        arg_type = f"Optional[{arg_type[:-1]}]"
+                    
                     new_arg_str = f"{arg_name}: {arg_type}"
                     if default_value:
-                        new_arg_str += f" = {default_value.lstrip('= ').strip()}"
+                        default_clean = default_value.lstrip('= ').strip()
+                        new_arg_str += f" = {default_clean}"
                     new_args.append(new_arg_str)
                 else:
                     # If user wrote "x" (no type), accept it as-is
@@ -751,9 +882,15 @@ def parse_clyp(
                     arg_type = parts[0]
                     arg_name = parts[1]
                     default_value = " ".join(parts[2:]) if len(parts) > 2 else ""
+                    
+                    # Handle optional types: int? -> Optional[int]
+                    if arg_type.endswith('?'):
+                        arg_type = f"Optional[{arg_type[:-1]}]"
+                    
                     new_arg_str = f"{arg_name}: {arg_type}"
                     if default_value:
-                        new_arg_str += f" = {default_value.lstrip('= ').strip()}"
+                        default_clean = default_value.lstrip('= ').strip()
+                        new_arg_str += f" = {default_clean}"
                     new_args.append(new_arg_str)
                 else:
                     # allow untyped arg names
@@ -793,6 +930,25 @@ def parse_clyp(
 
         # range x to y -> range(x, y + 1)
         code_part = re.sub(r"\brange\s+(\S+)\s+to\s+(\S+)", r"range(\1, \2 + 1)", code_part)
+
+        # New Language Features Processing
+        
+        # Lambda expressions: (x) => x * 2 -> lambda x: x * 2
+        code_part = re.sub(r'\(([^)]*)\)\s*=>\s*([^;,\n]+)', r'lambda \1: \2', code_part)
+        code_part = re.sub(r'(\w+)\s*=>\s*([^;,\n]+)', r'lambda \1: \2', code_part)
+        
+        # Guard clauses: guard condition else return value -> if not condition: return value
+        code_part = re.sub(r'\bguard\s+([^;]+?)\s+else\s+(return\s+[^;]+)', r'if not (\1): \2', code_part)
+        
+        # List comprehensions: [expr for item in list] (already valid Python)
+        # Dict comprehensions: {key: value for item in list} (already valid Python)
+        
+        # Destructuring assignment: let [a, b] = array -> a, b = array
+        code_part = re.sub(r'\[([^\]]+)\]\s*=', r'\1 =', code_part)
+        code_part = re.sub(r'\{([^}]+)\}\s*=', r'\1 =', code_part)
+        
+        # Spread operator: ...array -> *array, {**dict}
+        code_part = re.sub(r'\.\.\.(\w+)', r'*\1', code_part)
 
         # replace keywords outside strings
         code_part = _replace_keywords_outside_strings(code_part)
