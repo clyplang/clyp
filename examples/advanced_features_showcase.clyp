@@ -1,0 +1,157 @@
+# examples/advanced_features_showcase.clyp
+# Comprehensive demonstration of Clyp's advanced features
+
+print("=== Advanced Clyp Features Showcase ===");
+
+# 1. Arrow Functions and Pipe Operator
+let numbers = [1, 2, 3, 4, 5];
+let processNumbers = numbers |> (arr => [x * 2 for x in arr if x % 2 == 0]);
+print("Processed numbers: {processNumbers}");
+
+# 2. Ternary Operator with Optional Chaining
+let user = {"name": "Alice", "profile": {"age": 25}};
+let message = user?.profile?.age >= 18 ? "Adult user" : "Minor user";
+print("User status: {message}");
+
+# 3. Compound Assignment and Increment Operators
+let counter = 0;
+counter += 5;
+counter++;
+let score = 100;
+score *= 2;
+score--;
+print("Counter: {counter}, Score: {score}");
+
+# 4. Constants and Null Coalescing
+const MAX_ITEMS = 100;
+let items = null;
+let itemCount = items?.length ?? 0;
+print("Item count: {itemCount} (max: {MAX_ITEMS})");
+
+# 5. Array Comprehensions with Conditions
+let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+let evenSquares = [x * x for x in data if x % 2 == 0];
+let oddCubes = [x * x * x for x in data if x % 2 == 1];
+print("Even squares: {evenSquares}");
+print("Odd cubes: {oddCubes}");
+
+# 6. Enhanced Classes with Static Methods
+class MathUtils {
+    static function square(int value) returns int {
+        return value * value;
+    }
+    
+    static function factorial(int n) returns int {
+        return n <= 1 ? 1 : n * MathUtils.factorial(n - 1);
+    }
+}
+
+print("Square of 7: {MathUtils.square(7)}");
+print("Factorial of 5: {MathUtils.factorial(5)}");
+
+# 7. Async Functions and Await
+async function fetchUserData(str userId) returns dict {
+    print("Fetching user data for: {userId}");
+    # Simulate async operation
+    return {"id": userId, "name": "User {userId}", "active": true};
+}
+
+async function processUser(str userId) {
+    let userData = await fetchUserData(userId);
+    let status = userData?.active ? "active" : "inactive";
+    print("User {userData['name']} is {status}");
+}
+
+# 8. Destructuring with Advanced Features
+let userList = [
+    {"name": "Alice", "score": 95},
+    {"name": "Bob", "score": 87},
+    {"name": "Charlie", "score": 92}
+];
+
+# Process users with multiple features combined
+for user in userList {
+    let {name, score} = user;
+    let grade = score >= 90 ? "A" : score >= 80 ? "B" : "C";
+    let message = name |> (n => "Student {n} earned grade {grade}");
+    print(message);
+}
+
+# 9. Advanced Standard Library Usage
+let testData = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+# Using new stdlib functions
+let firstThree = take(3, testData);
+let afterThree = drop(3, testData);
+let whileLessThan5 = take_while(x => x < 5, testData);
+
+print("First three: {firstThree}");
+print("After three: {afterThree}");
+print("While less than 5: {whileLessThan5}");
+
+# Safe operations
+let safeValue = safe_get(user, "nonexistent", "default");
+print("Safe value: {safeValue}");
+
+# 10. Functional Programming Patterns
+let pipeline = pipe(
+    x => x * 2,
+    x => x + 1,
+    x => x.toString()
+);
+
+let result = 5 |> pipeline;
+print("Pipeline result: {result}");
+
+# 11. Complex Feature Integration
+let users = [
+    {"name": "Alice", "age": 25, "skills": ["Python", "JavaScript"]},
+    {"name": "Bob", "age": 30, "skills": ["Java", "C++"]},
+    {"name": "Charlie", "age": 35, "skills": ["Go", "Rust"]}
+];
+
+# Advanced query with multiple features
+let seniorDevelopers = [
+    {
+        "name": user?.name ?? "Unknown",
+        "skillCount": user?.skills?.length ?? 0,
+        "level": user?.age >= 30 ? "Senior" : "Junior"
+    }
+    for user in users 
+    if (user?.age ?? 0) >= 25 && (user?.skills?.length ?? 0) > 1
+];
+
+print("Senior developers:");
+for dev in seniorDevelopers {
+    print("  {dev['name']}: {dev['skillCount']} skills ({dev['level']})");
+}
+
+# 12. Error Handling with New Features
+try {
+    let riskyOperation = () => {
+        let randomValue = 42;  # Simulate some operation
+        return randomValue > 50 ? "success" : null;
+    };
+    
+    let result = riskyOperation() ?? "fallback";
+    result += " - processed";
+    print("Operation result: {result}");
+}
+catch (Exception e) {
+    print("Error occurred: {e}");
+}
+
+# 13. Enums with Advanced Usage
+enum Priority { Low, Medium, High, Critical }
+
+let tasks = [
+    {"name": "Bug fix", "priority": Priority.High},
+    {"name": "Feature", "priority": Priority.Medium},
+    {"name": "Security", "priority": Priority.Critical}
+];
+
+let criticalTasks = [task for task in tasks if task["priority"] == Priority.Critical];
+print("Critical tasks: {criticalTasks}");
+
+print("\n=== Advanced Features Demo Complete ===");
+print("Successfully demonstrated 13 categories of advanced Clyp features!");

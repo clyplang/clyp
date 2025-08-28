@@ -1,0 +1,15 @@
+{
+  "name": "stdlib-showcase-project",
+  "version": "1.0.0",
+  "description": "Comprehensive showcase of Clyp's enhanced standard library functions",
+  "main": "stdlib_demo.clyp",
+  "author": "Clyp Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "clyp run stdlib_demo.clyp",
+    "test": "clyp check .",
+    "format": "clyp format .",
+    "demo-all": "clyp run stdlib_demo.clyp"
+  },
+  "keywords": ["clyp", "stdlib", "standard-library", "utilities", "functions"]
+}

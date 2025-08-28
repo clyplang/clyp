@@ -1,0 +1,216 @@
+# examples/new_features_showcase.clyp
+# Comprehensive showcase of new Clyp language features
+
+# Type aliases for better code readability
+type UserId = int;
+type UserData = Dict[str, Any];
+
+# Enums for better constants management
+enum Status {
+    Active,
+    Inactive,
+    Pending,
+    Suspended
+}
+
+enum Priority {
+    Low,
+    Medium,
+    High,
+    Critical
+}
+
+# Class with new features
+class User {
+    int id;
+    str name;
+    str? email = null;  # Optional type with default
+    Status status = Status.Active;
+    
+    # Method with optional parameters and default values
+    function greet(str? greeting = "Hello", bool formal = false) returns str {
+        let prefix = greeting ?? "Hi";
+        let suffix = formal ? " Sir/Madam" : "";
+        return "{prefix}, {name}{suffix}!";
+    }
+    
+    # Method with destructuring and pattern matching
+    function updateProfile({name, email, age = 18}) returns bool {
+        guard name != null else return false;
+        
+        self.name = name;
+        self.email = email;
+        
+        match age {
+            when 0..<18 => self.status = Status.Pending
+            when 18..65 => self.status = Status.Active  
+            when 65.. => self.status = Status.Inactive
+        }
+        
+        return true;
+    }
+}
+
+# Function showcasing multiple new features
+function processUsers(List[UserData] users, str? filterBy = null) returns List[str] {
+    # Lambda expressions and optional chaining
+    let activeUsers = users.filter(user => user?.status == "active");
+    
+    # Null coalescing and string interpolation
+    let prefix = filterBy ?? "User";
+    
+    # List comprehension with new features
+    return ["{prefix}: {user?.name ?? "Unknown"}" for user in activeUsers];
+}
+
+# Async function example (if supported)
+async function fetchUserData(UserId id) returns UserData? {
+    try {
+        let response = await fetch("https://api.users.com/{id}");
+        let data = await response.json();
+        return data?.user;
+    }
+    catch (Exception e) {
+        debug(e, "Failed to fetch user");
+        return null;
+    }
+    finally {
+        print("Fetch attempt completed");
+    }
+}
+
+# Pattern matching example
+function handleUserAction(str action, UserData user) returns str {
+    match action {
+        when "login" => {
+            guard user?.status == "active" else return "Account not active";
+            return "Welcome, {user.name}!";
+        }
+        when "logout" => "Goodbye, {user?.name ?? "User"}!"
+        when "delete" => {
+            match user?.role {
+                when "admin" => "Admin accounts cannot be deleted"
+                when "user" => "Account scheduled for deletion"
+                _ => "Unknown role"
+            }
+        }
+        _ => "Unknown action"
+    }
+}
+
+# Demonstrating new utility functions
+function analyzeData(List[Any] data) returns Dict[str, Any] {
+    # Group data by type
+    let grouped = group_by(data, item => type(item).__name__);
+    
+    # Get unique values
+    let uniqueValues = unique(data);
+    
+    # Partition into numbers and non-numbers  
+    let [numbers, others] = partition(data, item => isinstance(item, (int, float)));
+    
+    # Calculate statistics for numbers
+    let stats = null;
+    if (numbers.length > 0) {
+        let sum = numbers.reduce((a, b) => a + b, 0);
+        let avg = sum / numbers.length;
+        stats = {
+            "sum": sum,
+            "average": avg,
+            "min": min(numbers),
+            "max": max(numbers),
+            "count": numbers.length
+        };
+    }
+    
+    return {
+        "grouped": grouped,
+        "unique_count": uniqueValues.length,
+        "number_stats": stats,
+        "summary": "Processed {data.length} items, found {uniqueValues.length} unique values"
+    };
+}
+
+# Range and spread operator examples
+function generateSequence(int start, int end, int step = 1) returns List[int] {
+    let range = start..end;
+    let stepped = [x for x in range if x % step == 0];
+    
+    # Spread operator usage
+    let prefix = [0, -1];
+    let suffix = [999, 1000];
+    
+    return [...prefix, ...stepped, ...suffix];
+}
+
+# Enhanced error handling
+function safeOperation(Any value) returns str {
+    try {
+        let result = riskyFunction(value);
+        debug(result, "Operation result");
+        return "Success: {result}";
+    }
+    catch (ValueError e) {
+        return "Value error: {e.message}";
+    }
+    catch (TypeError e) {
+        return "Type error: {e.message}";  
+    }
+    catch (Exception e) {
+        return "Unexpected error: {e}";
+    }
+    finally {
+        print("Operation completed");
+    }
+}
+
+# Main execution showcasing features
+function main() returns null {
+    print("=== Clyp New Features Showcase ===");
+    
+    # Create user with new syntax
+    let user = User();
+    user.id = 1;
+    user.name = "Alice";
+    user.email = "alice@example.com";
+    
+    # Use optional chaining and null coalescing
+    print("User email: {user?.email ?? "No email"}");
+    
+    # Pattern matching
+    let greeting = match user.status {
+        when Status.Active => "Welcome back!"
+        when Status.Pending => "Please verify your account"
+        when Status.Inactive => "Account is inactive"
+        _ => "Unknown status"
+    };
+    print(greeting);
+    
+    # Test new utility functions
+    let data = [1, 2, 3, 2, 4, 5, 4, 6, "hello", "world", 3.14];
+    let analysis = analyzeData(data);
+    print("Data analysis: {json_stringify(analysis, pretty: true)}");
+    
+    # Lambda and functional programming
+    let numbers = 1..10;
+    let doubled = numbers.map(x => x * 2);
+    let evens = doubled.filter(x => x % 2 == 0);
+    print("Even doubled numbers: {evens}");
+    
+    # String interpolation with expressions
+    let result = clamp(15, 0, 10);
+    print("Clamped value (15 between 0-10): {result}");
+    
+    # Formatting utilities
+    let fileSize = 1024 * 1024 * 2.5;
+    let duration = 3665;
+    print("File size: {format_bytes(fileSize)}");
+    print("Duration: {format_duration(duration)}");
+    
+    # Range generation
+    let sequence = generateSequence(1, 20, 3);
+    print("Generated sequence: {sequence}");
+}
+
+# Execute main function
+main();

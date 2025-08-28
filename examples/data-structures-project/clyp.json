@@ -1,0 +1,15 @@
+{
+  "name": "data-structures-project",
+  "version": "1.0.0",
+  "description": "Demonstrates working with data structures in Clyp including lists, dictionaries, and objects",
+  "main": "data_demo.clyp",
+  "author": "Clyp Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "clyp run data_demo.clyp",
+    "test": "clyp check .",
+    "format": "clyp format .",
+    "clean": "rm -rf build/ dist/ .clyp-cache/"
+  },
+  "keywords": ["clyp", "data-structures", "lists", "dictionaries", "objects"]
+}

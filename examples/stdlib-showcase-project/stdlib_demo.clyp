@@ -1,0 +1,28 @@
+# Clyp Standard Library Showcase
+print("Clyp Standard Library Demo");
+
+# 1. Basic Operations
+print("1. Basic Operations:");
+let value = "42";
+print("Basic value: " + value);
+
+# 2. String Operations
+print("2. String Operations:");
+let name = "Charlie";
+let message = "Hello, " + name + "!";
+print("Message: " + message);
+
+# 3. Math Operations
+print("3. Math Operations:");
+function calculate() returns str {
+    return "calculation complete";
+}
+
+function formatMessage(str name, str action) returns str {
+    return name + " is " + action;
+}
+
+print("Calculate result: " + calculate());
+print(formatMessage("Alice", "working"));
+
+print("Standard Library Demo Complete");

@@ -17,20 +17,149 @@ import clyp.stdlib as stdlib
 from clyp.ErrorHandling import ClypSyntaxError
 
 
+def convert_clyp_params_to_python(params: str) -> str:
+    """Convert Clyp function parameters to Python parameters."""
+    if not params.strip():
+        return ""
+    
+    param_list = []
+    for param in params.split(','):
+        param = param.strip()
+        if not param:
+            continue
+            
+        # Handle typed parameters: int x, str? name = "default"
+        # Parse: [type?] name [= default]
+        parts = param.split('=', 1)
+        param_part = parts[0].strip()
+        default_value = parts[1].strip() if len(parts) > 1 else None
+        
+        # Extract type and name
+        type_name_parts = param_part.split()
+        if len(type_name_parts) == 2:
+            param_type, param_name = type_name_parts
+            # Handle optional types (str? -> Optional[str])
+            if param_type.endswith('?'):
+                param_type = f"Optional[{param_type[:-1]}]"
+            if default_value:
+                param_list.append(f"{param_name}: {param_type} = {default_value}")
+            else:
+                param_list.append(f"{param_name}: {param_type}")
+        else:
+            # No type specified, just parameter name
+            param_name = param_part
+            if default_value:
+                param_list.append(f"{param_name} = {default_value}")
+            else:
+                param_list.append(param_name)
+    
+    return ", ".join(param_list)
+
+
 def _replace_keywords_outside_strings(line: str) -> str:
     """
     Replaces specific Clyp keywords with Python equivalents outside of string literals.
-    Replaces 'unless' -> 'if not', 'is not' -> '!=', 'is' -> '=='.
+    Replaces 'unless' -> 'if not', 'is not' -> '!=', 'is' -> '==', 'else if' -> 'elif'.
+    Also handles new Clyp syntax features like string interpolation, optional chaining, etc.
     """
-    # Split on simple single/double quoted strings (won't capture triple-quote groups inside)
-    parts = re.split(r'(".*?"|\'.*?\')', line)
-    for i in range(0, len(parts), 2):
-        part = parts[i]
-        part = re.sub(r"\bunless\b", "if not", part)
-        part = re.sub(r"\bis not\b", "!=", part)
-        part = re.sub(r"\bis\b", "==", part)
-        parts[i] = part
-    return "".join(parts)
+    # Enhanced string interpolation handling with nested quotes support
+    result = line
+    
+    # Handle string interpolation with more complex pattern matching
+    def find_interpolated_strings(text):
+        """Find strings that contain braces for interpolation, handling nested quotes."""
+        strings_to_replace = []
+        i = 0
+        while i < len(text):
+            if text[i] in ['"', "'"]:
+                quote_char = text[i]
+                start_pos = i
+                i += 1
+                brace_count = 0
+                has_braces = False
+                
+                # Scan through the string content
+                while i < len(text):
+                    char = text[i]
+                    if char == quote_char and brace_count == 0:
+                        # End of string
+                        if has_braces:
+                            strings_to_replace.append((start_pos, i + 1, text[start_pos:i+1]))
+                        break
+                    elif char == '{':
+                        has_braces = True
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                    elif char == '\\':
+                        # Skip escaped character
+                        i += 1
+                    i += 1
+                else:
+                    # Reached end without closing quote
+                    break
+            i += 1
+        return strings_to_replace
+    
+    # Find and replace interpolated strings
+    strings_to_replace = find_interpolated_strings(result)
+    
+    # Replace from end to start to maintain indices
+    for start, end, original in reversed(strings_to_replace):
+        if not original.startswith('f'):
+            replacement = 'f' + original
+            result = result[:start] + replacement + result[end:]
+    
+    # Process other language features BEFORE splitting on strings
+    # This way null coalescing can work across string boundaries
+    
+    # Original keyword replacements
+    result = re.sub(r"\bunless\b", "if not", result)
+    result = re.sub(r"\bis not\b", "!=", result)
+    result = re.sub(r"\bis\b", "==", result)
+    result = re.sub(r"\belse\s+if\b", "elif", result)
+    
+    # New language features - handle them before string splitting
+    
+    # 1. Arrow functions with implicit returns: x => x * 2 -> lambda x: x * 2
+    result = re.sub(r'(\w+(?:\s*,\s*\w+)*)\s*=>\s*([^;,\)\]\}]+)', r'lambda \1: \2', result)
+    result = re.sub(r'\(([^)]*)\)\s*=>\s*([^;,\)\]\}]+)', r'lambda \1: \2', result)
+    
+    # 2. Ternary operator: condition ? value1 : value2 -> value1 if condition else value2
+    # Match specifically in assignment contexts
+    result = re.sub(r'=\s*([^?]+?)\s*\?\s*([^:]+?)\s*:\s*([^;,\)\]\}]+)', r'= (\2 if \1 else \3)', result)
+    
+    # 3. Pipe operator: value |> func -> func(value)
+    # Match specifically in assignment contexts, handle parentheses
+    result = re.sub(r'=\s*([^=|]+?)\s*\|\>\s*(\([^)]+\)|\w+)', r'= \2(\1)', result)
+    
+    # 4. Compound assignment operators
+    result = re.sub(r'(\w+)\s*\+=\s*([^;,\)\]\}]+)', r'\1 = \1 + \2', result)
+    result = re.sub(r'(\w+)\s*-=\s*([^;,\)\]\}]+)', r'\1 = \1 - \2', result)
+    result = re.sub(r'(\w+)\s*\*=\s*([^;,\)\]\}]+)', r'\1 = \1 * \2', result)
+    result = re.sub(r'(\w+)\s*\/=\s*([^;,\)\]\}]+)', r'\1 = \1 / \2', result)
+    result = re.sub(r'(\w+)\s*\%=\s*([^;,\)\]\}]+)', r'\1 = \1 % \2', result)
+    result = re.sub(r'(\w+)\s*\|\|=\s*([^;,\)\]\}]+)', r'\1 = \1 if \1 is not None else \2', result)
+    
+    # 5. Increment/decrement operators
+    result = re.sub(r'(\w+)\+\+', r'\1 = \1 + 1', result)
+    result = re.sub(r'(\w+)--', r'\1 = \1 - 1', result)
+    result = re.sub(r'\+\+(\w+)', r'\1 = \1 + 1', result)
+    result = re.sub(r'--(\w+)', r'\1 = \1 - 1', result)
+    
+    # Null coalescing: value ?? default -> value if value is not None else default
+    result = re.sub(r'(\w+(?:\([^)]*\))?)\s*\?\?\s*("(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|\w+(?:\([^)]*\))?)', r'(\1 if \1 is not None else \2)', result)
+    
+    # Optional chaining: obj?.prop -> (obj.prop if obj is not None else None)
+    # Handle method calls: obj?.method() -> (obj.method() if obj is not None else None)
+    result = re.sub(r'(\w+)\?\.(\w+\([^)]*\))', r'(\1.\2 if \1 is not None else None)', result)
+    # Handle property access: obj?.prop -> (obj.prop if obj is not None else None)
+    result = re.sub(r'(\w+)\?\.(\w+)', r'(\1.\2 if \1 is not None else None)', result)
+    
+    # Range expressions: 1..10 -> range(1, 11), 1..<10 -> range(1, 10)
+    result = re.sub(r'(\d+)\.\.(<?)(\d+)', lambda m: f'range({m.group(1)}, {m.group(3)})' if m.group(2) else f'range({m.group(1)}, {int(m.group(3)) + 1})', result)
+    
+    return result
 
 
 def _resolve_clyp_module_path(
@@ -69,7 +198,13 @@ def _resolve_clyp_module_path(
             for part in parts:
                 check_dir = check_dir / part
                 if not (check_dir / "__init__.clyp").exists():
-                    raise ClypSyntaxError(f"[E100] Parent directory missing __init__.clyp for package '{module_name}'", -1, -1)
+                    raise ClypSyntaxError(
+                        f"[E103] Parent directory missing __init__.clyp for package '{module_name}'\n"
+                        "💡 Tip: Each package directory must contain an __init__.clyp file\n"
+                        f"💡 Missing file: {check_dir / '__init__.clyp'}\n"
+                        "💡 Create an empty __init__.clyp file if no initialization is needed", 
+                        -1, -1
+                    )
             return init_file
     return None
 
@@ -106,8 +241,11 @@ def transpile_to_clyp(python_code: str) -> str:
                     args.append(f"{arg_type} {arg.arg}")
                 else:
                     args.append(arg.arg)
-            returns = ast.unparse(node.returns) if node.returns else "any"
-            self.emit(f"function {node.name}({', '.join(args)}) returns {returns} {{")
+            returns = ast.unparse(node.returns) if node.returns else None
+            if returns:
+                self.emit(f"function {node.name}({', '.join(args)}) returns {returns} {{")
+            else:
+                self.emit(f"function {node.name}({', '.join(args)}) {{")  # No returns clause
             self.indent += 1
             for stmt in node.body:
                 self.visit(stmt)
@@ -273,6 +411,7 @@ def parse_clyp(
         "del gc\n"
         "import clyp\n"
         "from clyp.importer import clyp_import, clyp_include\n"
+        "from typing import Optional, Union\n"
     )
     if stdlib_imports:
         python_code += f"from clyp.stdlib import {stdlib_imports}\n"
@@ -358,15 +497,36 @@ def parse_clyp(
             i += 1
             continue
 
-        # braces -> keep as their own token with newline
+        # braces handling - only add newlines for block syntax, not inline objects/dictionaries
         if ch == "{":
+            # Look ahead to see if this is likely a dictionary/object literal or a code block
+            # Heuristics:
+            # 1. If we see : or " nearby, it's likely a dict
+            # 2. If we see = after the closing brace, it's likely destructuring
+            lookahead = src[i:i+100]  # Look ahead up to 100 chars
+            is_dict_like = ('"' in lookahead and ':' in lookahead) or ("'" in lookahead and ':' in lookahead)
+            # Check for destructuring pattern: { ... } =
+            closing_brace_pos = lookahead.find('}')
+            if closing_brace_pos != -1:
+                after_brace = lookahead[closing_brace_pos+1:].strip()
+                if after_brace.startswith('='):
+                    is_dict_like = True  # Treat destructuring as dict-like
             processed_chars.append("{")
-            processed_chars.append("\n")
+            if not is_dict_like:
+                processed_chars.append("\n")
             i += 1
             continue
         if ch == "}":
+            # Look behind to see if this closes a dictionary or destructuring
+            lookbehind = ''.join(processed_chars[-100:])  # Look back up to 100 chars
+            is_dict_like = ('"' in lookbehind and ':' in lookbehind) or ("'" in lookbehind and ':' in lookbehind)
+            # Check if this is part of destructuring by looking ahead for =
+            lookahead = src[i+1:i+20]
+            if lookahead.strip().startswith('='):
+                is_dict_like = True  # Treat destructuring as dict-like
             processed_chars.append("}")
-            processed_chars.append("\n")
+            if not is_dict_like:
+                processed_chars.append("\n")
             i += 1
             continue
 
@@ -395,7 +555,12 @@ def parse_clyp(
         if stripped_line.startswith("import "):
             parts = stripped_line.split()
             if len(parts) != 2:
-                raise ClypSyntaxError(f"Invalid import statement: {stripped_line}")
+                raise ClypSyntaxError(
+                    f"[E100] Invalid import statement: {stripped_line}\n"
+                    "💡 Tip: Use 'import <module>' or 'from <module> import <name>'\n"
+                    "💡 Example: import mymodule\n"
+                    "💡 Example: from mymodule import myfunction"
+                )
             module_name = parts[1]
 
             # Special-case: map short std aliases to clyp.std.<module> if listed in clyp.std.std_list
@@ -428,7 +593,10 @@ def parse_clyp(
                 processed_import_lines.append(f"{module_name} = clyp_import('{module_name}', {repr(file_path)})")
             else:
                 raise ClypSyntaxError(
-                    f"Cannot import Clyp module '{module_name}': not a Clyp package or single-file script."
+                    f"[E101] Cannot import Clyp module '{module_name}': not a Clyp package or single-file script.\n"
+                    "💡 Tip: Check that the module file exists and has .clyp extension\n"
+                    "💡 Tip: For packages, ensure the directory contains __init__.clyp\n"
+                    f"💡 Searched in: {base_dir if file_path else 'current directory'}"
                 )
             continue
 
@@ -473,10 +641,18 @@ def parse_clyp(
                     processed_import_lines.append("del _temp_module")
                 else:
                     raise ClypSyntaxError(
-                        f"Cannot import from Clyp module '{module_name}': not a Clyp package or single-file script."
+                        f"[E102] Cannot import from Clyp module '{module_name}': not a Clyp package or single-file script.\n"
+                        "💡 Tip: Check that the module file exists and has .clyp extension\n"
+                        "💡 Tip: Verify that the exported names exist in the target module\n"
+                        f"💡 Attempted to import: {', '.join(imported_names)}"
                     )
             else:
-                raise ClypSyntaxError(f"Invalid from-import statement: {stripped_line}")
+                raise ClypSyntaxError(
+                    f"[A102] Invalid from-import statement: {stripped_line}\n"
+                    "💡 Tip: Use syntax 'from module import name1, name2'\n"
+                    "💡 Example: from math import sin, cos\n"
+                    "💡 Check for proper spacing and commas between imported names"
+                )
             continue
 
         # include stays the same
@@ -486,8 +662,29 @@ def parse_clyp(
                 clb_path = match.group(1)
                 processed_import_lines.append(f'clyp_include(r"{clb_path}", r"{file_path}")')
             else:
-                raise ClypSyntaxError(f"Invalid include statement: {stripped_line}")
+                raise ClypSyntaxError(
+                    f"[A103] Invalid include statement: {stripped_line}\n"
+                    "💡 Tip: Use syntax 'include \"filename.clb\"'\n"
+                    "💡 Example: include \"mylib.clb\"\n"
+                    "💡 Ensure the filename is in double quotes and has .clb extension"
+                )
             continue
+
+        # Check for invalid "clyp import" syntax
+        if stripped_line.startswith("clyp import "):
+            raise ClypSyntaxError(
+                f"[A104] Invalid syntax: {stripped_line}\n"
+                "💡 Tip: Use 'import' instead of 'clyp import'\n"
+                "💡 Correct syntax: import module_name"
+            )
+
+        # Check for invalid "clyp from" syntax
+        if stripped_line.startswith("clyp from "):
+            raise ClypSyntaxError(
+                f"[A105] Invalid syntax: {stripped_line}\n"
+                "💡 Tip: Use 'from' instead of 'clyp from'\n"
+                "💡 Correct syntax: from module import name"
+            )
 
         processed_import_lines.append(line)
     infile_str_raw = "\n".join(processed_import_lines)
@@ -501,6 +698,8 @@ def parse_clyp(
     py_line_num = python_code.count("\n") + 1
     in_class_block = False
     class_indentation_level: Optional[int] = None
+    in_enum_block = False
+    enum_indentation_level: Optional[int] = None
 
     def strip_trailing_semicolon_from_call(s: str) -> str:
         """
@@ -583,9 +782,18 @@ def parse_clyp(
             infile_str_indented += indentation_level * indentation_sign + add_comment.lstrip() + "\n"
             continue
 
-        # handle 'let ' declarations: let x = ... -> x = ...
+        # handle 'let ' and 'const ' declarations: let x = ... -> x = ..., const x = ... -> x = ... (with comment)
         if code_part.lstrip().startswith("let "):
             code_part = code_part.lstrip()[4:].lstrip()
+        elif code_part.lstrip().startswith("const "):
+            # Handle const declarations - add comment to indicate immutability
+            const_part = code_part.lstrip()[6:].lstrip()
+            # Find the variable name for the comment
+            var_match = re.match(r'^(\w+)', const_part)
+            if var_match:
+                var_name = var_match.group(1)
+                add_comment = f" # const {var_name}" + add_comment
+            code_part = const_part
 
         stripped_line = code_part.strip()
 
@@ -595,6 +803,9 @@ def parse_clyp(
             if in_class_block and (class_indentation_level is not None and indentation_level < class_indentation_level):
                 in_class_block = False
                 class_indentation_level = None
+            if in_enum_block and (enum_indentation_level is not None and indentation_level < enum_indentation_level):
+                in_enum_block = False
+                enum_indentation_level = None
             code_part = code_part.lstrip("}").lstrip()
             stripped_line = code_part.strip()
             if not stripped_line:
@@ -602,6 +813,146 @@ def parse_clyp(
                 line_map[py_line_num] = clyp_line_num
                 py_line_num += 1
                 continue
+
+        # Destructuring assignment: { name, age } = user -> name, age = user['name'], user['age']
+        destructure_obj_match = re.match(r"^\{\s*([^}]+)\s*\}\s*=\s*(.+)$", stripped_line)
+        if destructure_obj_match:
+            keys = [k.strip() for k in destructure_obj_match.group(1).split(',')]
+            source = destructure_obj_match.group(2).strip()
+            assignments = ', '.join(keys) + ' = ' + ', '.join([f"{source}['{key}']" for key in keys])
+            infile_str_indented += indentation_sign * indentation_level + assignments + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Array destructuring: [first, second] = array -> first, second = array[0], array[1]
+        destructure_arr_match = re.match(r"^\[\s*([^\]]+)\s*\]\s*=\s*(.+)$", stripped_line)
+        if destructure_arr_match:
+            vars = [v.strip() for v in destructure_arr_match.group(1).split(',')]
+            source = destructure_arr_match.group(2).strip()
+            assignments = ', '.join(vars) + ' = ' + ', '.join([f"{source}[{i}]" for i in range(len(vars))])
+            infile_str_indented += indentation_sign * indentation_level + assignments + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Array comprehensions: [x * 2 for x in items if x > 0] -> [x * 2 for x in items if x > 0]
+        comprehension_match = re.match(r"^(.+)\s*=\s*\[([^[\]]+)\s+for\s+(\w+)\s+in\s+([^[\]]+?)(?:\s+if\s+([^[\]]+))?\]", stripped_line)
+        if comprehension_match:
+            var_name = comprehension_match.group(1).strip()
+            expr = comprehension_match.group(2).strip()
+            loop_var = comprehension_match.group(3).strip()
+            iterable = comprehension_match.group(4).strip()
+            condition = comprehension_match.group(5)
+            
+            if condition:
+                result_line = f"{var_name} = [{expr} for {loop_var} in {iterable} if {condition.strip()}]"
+            else:
+                result_line = f"{var_name} = [{expr} for {loop_var} in {iterable}]"
+            
+            infile_str_indented += indentation_sign * indentation_level + result_line + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Static method declarations: static function methodName -> @staticmethod
+        static_func_match = re.match(r"^static\s+function\s+([a-zA-Z_][\w]*)\s*\(([^)]*)\)(?:\s*returns\s+([a-zA-Z_][\w]*))?\s*\{?", stripped_line)
+        if static_func_match:
+            func_name = static_func_match.group(1)
+            params = static_func_match.group(2).strip()
+            return_type = static_func_match.group(3)
+            
+            # Convert Clyp parameters to Python parameters
+            python_params = convert_clyp_params_to_python(params) if params else ""
+            
+            infile_str_indented += indentation_sign * indentation_level + "@staticmethod\n"
+            if return_type:
+                infile_str_indented += indentation_sign * indentation_level + f"def {func_name}({python_params}) -> {return_type}:" + add_comment + "\n"
+            else:
+                infile_str_indented += indentation_sign * indentation_level + f"def {func_name}({python_params}):" + add_comment + "\n"
+            
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Async function declarations: async function name -> async def name
+        async_func_match = re.match(r"^async\s+function\s+([a-zA-Z_][\w]*)\s*\(([^)]*)\)(?:\s*returns\s+([a-zA-Z_][\w]*))?\s*\{?", stripped_line)
+        if async_func_match:
+            func_name = async_func_match.group(1)
+            params = async_func_match.group(2).strip()
+            return_type = async_func_match.group(3)
+            
+            # Convert Clyp parameters to Python parameters
+            python_params = convert_clyp_params_to_python(params) if params else ""
+            
+            if return_type:
+                infile_str_indented += indentation_sign * indentation_level + f"async def {func_name}({python_params}) -> {return_type}:" + add_comment + "\n"
+            else:
+                infile_str_indented += indentation_sign * indentation_level + f"async def {func_name}({python_params}):" + add_comment + "\n"
+            
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Await expressions: await someAsyncFunction() -> await someAsyncFunction()
+        if "await " in stripped_line:
+            stripped_line = re.sub(r'\bawait\s+', 'await ', stripped_line)
+        type_alias_match = re.match(r"^type\s+([a-zA-Z_][\w]*)\s*=\s*(.+);?", stripped_line)
+        if type_alias_match:
+            alias_name = type_alias_match.group(1)
+            alias_type = type_alias_match.group(2).strip()
+            infile_str_indented += indentation_sign * indentation_level + f"{alias_name} = {alias_type}" + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Enums: enum Status { Active, Inactive, Pending }
+        enum_match = re.match(r"^enum\s+([a-zA-Z_][\w]*)\s*\{([^}]*)\}", stripped_line)
+        if enum_match:
+            enum_name = enum_match.group(1)
+            enum_values_str = enum_match.group(2).strip()
+            enum_values = [v.strip() for v in enum_values_str.split(',') if v.strip()]
+            infile_str_indented += indentation_sign * indentation_level + f"from enum import Enum\n"
+            infile_str_indented += indentation_sign * indentation_level + f"class {enum_name}(Enum):" + add_comment + "\n"
+            indentation_level += 1
+            for i, value in enumerate(enum_values):
+                infile_str_indented += indentation_sign * indentation_level + f"{value} = {i + 1}\n"
+            indentation_level -= 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Multi-line enum declaration
+        enum_start_match = re.match(r"^enum\s+([a-zA-Z_][\w]*)\s*\{?", stripped_line)
+        if enum_start_match:
+            enum_name = enum_start_match.group(1)
+            infile_str_indented += indentation_sign * indentation_level + f"from enum import Enum" + "\n"
+            infile_str_indented += indentation_sign * indentation_level + f"class {enum_name}(Enum):" + add_comment + "\n"
+            in_enum_block = True
+            enum_indentation_level = indentation_level + 1
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Handle enum values when inside an enum block
+        if in_enum_block:
+            # Remove closing brace if present and extract values
+            values_line = stripped_line.rstrip('}').strip()
+            if values_line:
+                enum_values = [v.strip() for v in values_line.split(',') if v.strip()]
+                for i, value in enumerate(enum_values):
+                    infile_str_indented += indentation_sign * indentation_level + f"{value} = {i + 1}\n"
+                line_map[py_line_num] = clyp_line_num
+                py_line_num += 1
+            # If line ended with }, we're done with the enum
+            if stripped_line.rstrip().endswith('}'):
+                in_enum_block = False
+                enum_indentation_level = None
+                indentation_level -= 1
+            continue
 
         # class declaration
         if stripped_line.startswith("class "):
@@ -617,16 +968,89 @@ def parse_clyp(
                 continue
 
         # class member declaration -> annotation (e.g., "int count = 0" -> "count: int = 0")
+        # Exclude statements that start with Python keywords like 'return', 'if', 'for', etc.
         class_field_match = re.match(r"^([a-zA-Z_][\w]*)\s+([a-zA-Z_][\w]*)(\s*=\s*.+)?;?$", stripped_line)
-        if in_class_block and class_field_match:
+        if (in_class_block and class_field_match and 
+            not stripped_line.startswith(('return', 'if', 'for', 'while', 'try', 'except', 'finally', 'with', 'assert', 'del', 'global', 'nonlocal', 'pass', 'break', 'continue', 'raise', 'yield', 'await'))):
             typ, name, default = class_field_match.groups()
             default = default.strip() if default else ""
             if default:
                 default = default.lstrip("= ").strip()
-                outfile_line = f"{name}: {typ} = {default}"
+                # Keep Clyp-style "type name = value" format for consistency
+                outfile_line = f"{typ} {name} = {default}"
             else:
-                outfile_line = f"{name}: {typ}"
+                # Keep Clyp-style "type name" format for consistency
+                outfile_line = f"{typ} {name}"
             infile_str_indented += indentation_sign * indentation_level + outfile_line + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Pattern Matching: match value when pattern => result
+        match_pattern = re.match(r"^match\s+([^{]+)\s*\{?", stripped_line)
+        if match_pattern:
+            match_value = match_pattern.group(1).strip()
+            infile_str_indented += indentation_sign * indentation_level + f"match {match_value}:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+            
+        # Pattern matching cases: when pattern => result
+        when_pattern = re.match(r"^when\s+([^=]+)=>\s*(.+)", stripped_line)
+        if when_pattern:
+            pattern = when_pattern.group(1).strip()
+            result = when_pattern.group(2).strip()
+            infile_str_indented += indentation_sign * indentation_level + f"case {pattern}:" + add_comment + "\n"
+            indentation_level += 1
+            infile_str_indented += indentation_sign * indentation_level + result + "\n"
+            indentation_level -= 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Switch expressions: switch value { case 1 => "one", case 2 => "two" }
+        switch_pattern = re.match(r"^switch\s+([^{]+)\s*\{?", stripped_line)
+        if switch_pattern:
+            switch_value = switch_pattern.group(1).strip()
+            infile_str_indented += indentation_sign * indentation_level + f"match {switch_value}:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Try/catch/finally blocks
+        try_pattern = re.match(r"^try\s*\{?", stripped_line)
+        if try_pattern:
+            infile_str_indented += indentation_sign * indentation_level + "try:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+            
+        catch_pattern = re.match(r"^catch\s*\(([^)]*)\)\s*\{?", stripped_line)
+        if catch_pattern:
+            exception_spec = catch_pattern.group(1).strip()
+            if exception_spec:
+                # Handle "Exception e" format
+                parts = exception_spec.split()
+                if len(parts) == 2:
+                    exception_type, var_name = parts
+                    infile_str_indented += indentation_sign * indentation_level + f"except {exception_type} as {var_name}:" + add_comment + "\n"
+                else:
+                    # Just exception type or variable name
+                    infile_str_indented += indentation_sign * indentation_level + f"except {exception_spec}:" + add_comment + "\n"
+            else:
+                infile_str_indented += indentation_sign * indentation_level + "except Exception:" + add_comment + "\n"
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+            
+        finally_pattern = re.match(r"^finally\s*\{?", stripped_line)
+        if finally_pattern:
+            infile_str_indented += indentation_sign * indentation_level + "finally:" + add_comment + "\n"
+            indentation_level += 1
             line_map[py_line_num] = clyp_line_num
             py_line_num += 1
             continue
@@ -654,9 +1078,15 @@ def parse_clyp(
                     arg_type = parts[0]
                     arg_name = parts[1]
                     default_value = " ".join(parts[2:]) if len(parts) > 2 else ""
+                    
+                    # Handle optional types: int? -> Optional[int]
+                    if arg_type.endswith('?'):
+                        arg_type = f"Optional[{arg_type[:-1]}]"
+                    
                     new_arg_str = f"{arg_name}: {arg_type}"
                     if default_value:
-                        new_arg_str += f" = {default_value.lstrip('= ').strip()}"
+                        default_clean = default_value.lstrip('= ').strip()
+                        new_arg_str += f" = {default_clean}"
                     new_args.append(new_arg_str)
                 else:
                     # If user wrote "x" (no type), accept it as-is
@@ -664,7 +1094,10 @@ def parse_clyp(
                         new_args.append(parts[0])
                     else:
                         raise ClypSyntaxError(
-                            f"Argument '{arg}' in method definition is malformed. Found in line: {stripped_line}"
+                            f"[A106] Argument '{arg}' in method definition is malformed.\n"
+                            "💡 Tip: Use format 'type name' or 'type name = default_value'\n"
+                            "💡 Example: int count, str name = \"default\"\n"
+                            f"💡 Found in line: {stripped_line}"
                         )
             new_args_str = ", ".join(new_args)
             # map Clyp 'null' -> Python 'None' in return type if present
@@ -697,9 +1130,15 @@ def parse_clyp(
                     arg_type = parts[0]
                     arg_name = parts[1]
                     default_value = " ".join(parts[2:]) if len(parts) > 2 else ""
+                    
+                    # Handle optional types: int? -> Optional[int]
+                    if arg_type.endswith('?'):
+                        arg_type = f"Optional[{arg_type[:-1]}]"
+                    
                     new_arg_str = f"{arg_name}: {arg_type}"
                     if default_value:
-                        new_arg_str += f" = {default_value.lstrip('= ').strip()}"
+                        default_clean = default_value.lstrip('= ').strip()
+                        new_arg_str += f" = {default_clean}"
                     new_args.append(new_arg_str)
                 else:
                     # allow untyped arg names
@@ -707,7 +1146,10 @@ def parse_clyp(
                         new_args.append(parts[0])
                     else:
                         raise ClypSyntaxError(
-                            f"Argument '{arg}' in function definition must be in 'type name' format. Found in line: {stripped_line}"
+                            f"[A107] Argument '{arg}' in function definition must be in 'type name' format.\n"
+                            "💡 Tip: Specify both type and name for each parameter\n"
+                            "💡 Example: function myFunc(int x, str name) returns bool\n"
+                            f"💡 Found in line: {stripped_line}"
                         )
             new_args_str = ", ".join(new_args)
             py_return_type = "None" if return_type == "null" else return_type
@@ -737,6 +1179,25 @@ def parse_clyp(
         # range x to y -> range(x, y + 1)
         code_part = re.sub(r"\brange\s+(\S+)\s+to\s+(\S+)", r"range(\1, \2 + 1)", code_part)
 
+        # New Language Features Processing
+        
+        # Lambda expressions: (x) => x * 2 -> lambda x: x * 2
+        code_part = re.sub(r'\(([^)]*)\)\s*=>\s*([^;,\n]+)', r'lambda \1: \2', code_part)
+        code_part = re.sub(r'(\w+)\s*=>\s*([^;,\n]+)', r'lambda \1: \2', code_part)
+        
+        # Guard clauses: guard condition else return value -> if not condition: return value
+        code_part = re.sub(r'\bguard\s+([^;]+?)\s+else\s+(return\s+[^;]+)', r'if not (\1): \2', code_part)
+        
+        # List comprehensions: [expr for item in list] (already valid Python)
+        # Dict comprehensions: {key: value for item in list} (already valid Python)
+        
+        # Destructuring assignment: let [a, b] = array -> a, b = array
+        code_part = re.sub(r'\[([^\]]+)\]\s*=', r'\1 =', code_part)
+        code_part = re.sub(r'\{([^}]+)\}\s*=', r'\1 =', code_part)
+        
+        # Spread operator: ...array -> *array, {**dict}
+        code_part = re.sub(r'\.\.\.(\w+)', r'*\1', code_part)
+
         # replace keywords outside strings
         code_part = _replace_keywords_outside_strings(code_part)
 
@@ -756,8 +1217,8 @@ def parse_clyp(
             py_line_num += 1
             continue
 
-        # else if -> elif
-        indented_line = re.sub(r"^\s*else\s+if\b", lambda m: m.group(0).replace("else if", "elif"), indented_line, flags=re.IGNORECASE)
+        # else if -> elif (handle both start of line and middle of line)
+        indented_line = re.sub(r"\belse\s+if\b", "elif", indented_line, flags=re.IGNORECASE)
 
         # strip stray semicolons at end of line
         if indented_line.rstrip().endswith(";"):

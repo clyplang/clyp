@@ -1,0 +1,15 @@
+{
+  "name": "advanced-features-project",
+  "version": "1.0.0", 
+  "description": "Showcase of Clyp's advanced language features including async/await, arrow functions, and more",
+  "main": "advanced_demo.clyp",
+  "author": "Clyp Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "clyp run advanced_demo.clyp",
+    "test": "clyp check .",
+    "format": "clyp format .",
+    "demo": "clyp run advanced_demo.clyp"
+  },
+  "keywords": ["clyp", "advanced", "async", "arrow-functions", "modern-syntax"]
+}

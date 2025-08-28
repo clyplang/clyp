@@ -196,24 +196,266 @@ def get_clyp_line_for_py(
         return len(clyp_lines), clyp_lines[-1]
     return "?", ""
 
-def extract_optimization_level(clyp_code: str) -> int:
-    """
-    Extracts the optimization level from a line like:
-    define optimization_level <level>;
-    Returns 0 if not found or invalid.
-    """
-    match = re.search(r"define\s+optimization_level\s+(\d+)\s*;", clyp_code)
-    if match:
-        try:
-            level = int(match.group(1))
-            if level in (0, 1, 2):
-                return level
-        except Exception:
-            pass
-    return 0
+
 
 # Add global verbose flag
 VERBOSE = False
+
+# Clyp.json configuration handling
+def parse_json5(content: str) -> Dict[str, Any]:
+    """Parse JSON5 format (JSON with comments and trailing commas)."""
+    import re
+    
+    # Remove line comments (// ...) but preserve them in strings
+    lines = content.split('\n')
+    processed_lines = []
+    for line in lines:
+        # Simple check - if we're not in a string, remove comments
+        in_string = False
+        escaped = False
+        comment_pos = len(line)
+        
+        for i, char in enumerate(line):
+            if escaped:
+                escaped = False
+                continue
+            if char == '\\':
+                escaped = True
+                continue
+            if char == '"' and not escaped:
+                in_string = not in_string
+                continue
+            if not in_string and char == '/' and i + 1 < len(line) and line[i + 1] == '/':
+                comment_pos = i
+                break
+        
+        processed_lines.append(line[:comment_pos].rstrip())
+    
+    content = '\n'.join(processed_lines)
+    
+    # Remove block comments
+    content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+    
+    # Remove trailing commas (but be careful with arrays/objects)
+    content = re.sub(r',(\s*[}\]])', r'\1', content)
+    
+    # Parse as regular JSON
+    return json.loads(content)
+
+def load_clyp_config(config_path: str) -> Optional[Dict[str, Any]]:
+    """Load and validate clyp.json configuration file."""
+    try:
+        if not os.path.exists(config_path):
+            return None
+        
+        with open(config_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        # Try JSON5 parsing first, fall back to regular JSON
+        try:
+            config = parse_json5(content)
+        except json.JSONDecodeError:
+            try:
+                config = json.loads(content)
+            except json.JSONDecodeError as e:
+                Log.error(f"[V100] Invalid JSON in clyp.json: {e}")
+                Log.info("💡 Tip: Check for syntax errors like missing commas or quotes", file=sys.stderr)
+                Log.info("💡 Note: clyp.json supports JSON5 format (comments and trailing commas)", file=sys.stderr)
+                return None
+        
+        # Basic validation
+        if not isinstance(config, dict):
+            Log.error(f"[V100] Invalid clyp.json: Root must be an object.")
+            return None
+            
+        # Validate required fields
+        if "name" not in config:
+            Log.warn("[V101] clyp.json missing 'name' field")
+        if "version" not in config:
+            Log.warn("[V102] clyp.json missing 'version' field")
+        if "entry" not in config and "main" not in config:
+            Log.warn("[V103] clyp.json missing 'entry' or 'main' field")
+            
+        return config
+        
+    except Exception as e:
+        code = get_error_code(e)
+        Log.error(f"[{code}] Error reading clyp.json: {e}")
+        return None
+
+def get_project_config(project_dir: str = None) -> Optional[Dict[str, Any]]:
+    """Find and load the nearest clyp.json configuration."""
+    try:
+        if project_dir is None:
+            project_dir = os.getcwd()
+    except (OSError, FileNotFoundError):
+        # Handle case where current directory doesn't exist
+        if project_dir is None:
+            return None
+    
+    # Look for clyp.json in current directory and parent directories
+    current_dir = os.path.abspath(project_dir)
+    while current_dir != os.path.dirname(current_dir):  # Stop at filesystem root
+        config_path = os.path.join(current_dir, "clyp.json")
+        if os.path.exists(config_path):
+            if VERBOSE:
+                Log.info(f"Found clyp.json at: {config_path}")
+            return load_clyp_config(config_path)
+        current_dir = os.path.dirname(current_dir)
+    
+    return None
+
+def resolve_config_path(file_path: str, config: Dict[str, Any]) -> str:
+    """Resolve a path relative to the clyp.json location."""
+    if os.path.isabs(file_path):
+        return file_path
+    
+    # Find the directory containing clyp.json
+    config_dir = os.getcwd()
+    current_dir = os.path.abspath(config_dir)
+    while current_dir != os.path.dirname(current_dir):
+        if os.path.exists(os.path.join(current_dir, "clyp.json")):
+            config_dir = current_dir
+            break
+        current_dir = os.path.dirname(current_dir)
+    
+    return os.path.join(config_dir, file_path)
+
+def run_project_script(script_name: str, config: Dict[str, Any]) -> bool:
+    """Run a script defined in clyp.json scripts section."""
+    scripts = config.get("scripts", {})
+    if script_name not in scripts:
+        Log.error(f"Script '{script_name}' not found in clyp.json")
+        available = list(scripts.keys())
+        if available:
+            Log.info(f"💡 Available scripts: {', '.join(available)}")
+        return False
+    
+    script_command = scripts[script_name]
+    Log.info(f"Running script '{script_name}': {script_command}")
+    
+    # Execute the script command
+    import subprocess
+    try:
+        result = subprocess.run(script_command, shell=True, check=True)
+        return result.returncode == 0
+    except subprocess.CalledProcessError as e:
+        Log.error(f"Script '{script_name}' failed with exit code {e.returncode}")
+        return False
+    except Exception as e:
+        code = get_error_code(e)
+        Log.error(f"[{code}] Error running script '{script_name}': {e}")
+        return False
+
+def save_clyp_config(config: Dict[str, Any], config_path: str) -> bool:
+    """Save clyp.json configuration to file."""
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception as e:
+        code = get_error_code(e)
+        Log.error(f"[{code}] Error saving clyp.json: {e}")
+        return False
+
+def add_dependency(dep_spec: str, config: Dict[str, Any], config_path: str, is_dev: bool = False) -> bool:
+    """Add a dependency to clyp.json."""
+    # Parse dependency specification (name@version or just name)
+    if "@" in dep_spec:
+        name, version = dep_spec.split("@", 1)
+    else:
+        name = dep_spec
+        version = "*"  # Latest version
+    
+    # Determine which dependencies section to use
+    deps_key = "devDependencies" if is_dev else "dependencies"
+    if deps_key not in config:
+        config[deps_key] = {}
+    
+    # Add the dependency
+    config[deps_key][name] = version
+    
+    # Save the updated config
+    if save_clyp_config(config, config_path):
+        dep_type = "development " if is_dev else ""
+        Log.success(f"Added {dep_type}dependency: {name}@{version}")
+        return True
+    return False
+
+def remove_dependency(dep_name: str, config: Dict[str, Any], config_path: str, is_dev: bool = False) -> bool:
+    """Remove a dependency from clyp.json."""
+    deps_key = "devDependencies" if is_dev else "dependencies"
+    
+    if deps_key not in config or dep_name not in config[deps_key]:
+        dep_type = "development " if is_dev else ""
+        Log.error(f"{dep_type}dependency '{dep_name}' not found")
+        return False
+    
+    # Remove the dependency
+    del config[deps_key][dep_name]
+    
+    # Save the updated config
+    if save_clyp_config(config, config_path):
+        dep_type = "development " if is_dev else ""
+        Log.success(f"Removed {dep_type}dependency: {dep_name}")
+        return True
+    return False
+
+def find_config_file(start_dir: Optional[str] = None) -> Optional[str]:
+    """Find the nearest clyp.json file."""
+    current_dir = start_dir or os.getcwd()
+    current_dir = os.path.abspath(current_dir)
+    while current_dir != os.path.dirname(current_dir):  # Stop at filesystem root
+        config_path = os.path.join(current_dir, "clyp.json")
+        if os.path.exists(config_path):
+            return config_path
+        current_dir = os.path.dirname(current_dir)
+    return None
+
+def resolve_project_entry_point(directory_path: str) -> Optional[str]:
+    """Resolve the entry point file for a directory project with clyp.json."""
+    config_path = os.path.join(directory_path, "clyp.json")
+    if not os.path.exists(config_path):
+        return None
+    
+    config = load_clyp_config(config_path)
+    if not config:
+        return None
+    
+    # Try 'entry' first, then 'main' for compatibility
+    entry_point = config.get("entry") or config.get("main")
+    if not entry_point:
+        return None
+    
+    # Resolve entry point relative to the directory containing clyp.json
+    entry_path = os.path.join(directory_path, entry_point)
+    if os.path.exists(entry_path):
+        return os.path.abspath(entry_path)
+    
+    return None
+
+def resolve_input_path(input_path: str) -> Tuple[str, bool]:
+    """
+    Resolve input path to actual file to process.
+    Returns (resolved_path, is_directory_project)
+    """
+    abs_path = os.path.abspath(input_path)
+    
+    # If it's a file, return as-is
+    if os.path.isfile(abs_path):
+        return abs_path, False
+    
+    # If it's a directory, check for clyp.json and resolve entry point
+    if os.path.isdir(abs_path):
+        entry_point = resolve_project_entry_point(abs_path)
+        if entry_point:
+            return entry_point, True
+        else:
+            # No clyp.json or no entry point, treat as regular directory
+            return abs_path, False
+    
+    # Path doesn't exist
+    return abs_path, False
 
 def python_to_clyp_transpile(py_code):
     # Log when transpiler is invoked if verbose
@@ -279,20 +521,37 @@ def resolve_import_path(import_name, current_file_path):
 def main():
     import argparse
     # print(sys.argv)  # (optional: remove debug print)
-    parser = argparse.ArgumentParser(description="Clyp CLI tool (interpreted mode only).")
+    parser = argparse.ArgumentParser(
+        description="Clyp CLI tool (interpreted mode only).",
+        epilog="Examples:\n"
+        "  clyp run hello.clyp          # Run a Clyp file\n"
+        "  clyp run my-project/         # Run a directory project\n"
+        "  clyp init my-project         # Create a new Clyp project\n"
+        "  clyp format main.clyp        # Format Clyp code\n"
+        "  clyp format src/             # Format all files in directory\n"
+        "  clyp py2clyp script.py       # Convert Python to Clyp\n"
+        "  clyp check .                 # Check project for errors\n"
+        "  clyp deps main.clyp          # Show dependency tree\n"
+        "  clyp deps my-project/        # Show dependencies for project\n"
+        "  clyp script build            # Run a script from clyp.json\n"
+        "  clyp config --validate       # Validate clyp.json configuration\n"
+        "  clyp add math@1.0.0          # Add a dependency\n"
+        "  clyp remove math             # Remove a dependency",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     # Add global verbose flag
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output.")
     parser.add_argument("--version", action="store_true", help="Display the version of Clyp.")
-    subparsers = parser.add_subparsers(dest="command", help=argparse.SUPPRESS)
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
     # Only keep run, format, py2clyp, check, deps, init commands
-    run_parser = subparsers.add_parser("run", help="Run a Clyp file (interpreted mode).")
-    run_parser.add_argument("file", type=str, help="Path to the Clyp file to execute.")
+    run_parser = subparsers.add_parser("run", help="Run a Clyp file or directory project. Example: clyp run hello.clyp")
+    run_parser.add_argument("file", type=str, help="Path to the Clyp file or project directory to execute.")
     run_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments to pass to the Clyp script.")
-    format_parser = subparsers.add_parser("format", help="Format a Clyp file (overwrites by default).")
-    format_parser.add_argument("file", type=str, help="Path to the Clyp file to format.")
+    format_parser = subparsers.add_parser("format", help="Format Clyp files or directories. Example: clyp format main.clyp")
+    format_parser.add_argument("file", type=str, help="Path to the Clyp file or directory to format.")
     format_parser.add_argument("--print", action="store_true", help="Print formatted code instead of overwriting.")
     format_parser.add_argument("--no-write", action="store_true", help="Do not overwrite the file (alias for --print).")
-    py2clyp_parser = subparsers.add_parser("py2clyp", help="Transpile Python code to Clyp with advanced options.")
+    py2clyp_parser = subparsers.add_parser("py2clyp", help="Transpile Python code to Clyp. Example: clyp py2clyp script.py")
     py2clyp_parser.add_argument("file", type=str, help="Path to the Python file to transpile.")
     py2clyp_parser.add_argument("-o", "--output", type=str, default=None, help="Output file for Clyp code.")
     py2clyp_parser.add_argument("--print", action="store_true", help="Print transpiled Clyp code to stdout.")
@@ -304,12 +563,32 @@ def main():
     py2clyp_parser.add_argument("--no-format", action="store_true", help="Do not format the output.")
     py2clyp_parser.add_argument("--stats", action="store_true", help="Show statistics about the transpilation (lines, tokens, etc.).")
     py2clyp_parser.add_argument("-r", "--recursive", action="store_true", help="Recursively transpile a directory of Python files.")
-    check_parser = subparsers.add_parser("check", help="Check a Clyp file or project for syntax errors.")
-    check_parser.add_argument("file", type=str, nargs="?", default=None, help="Clyp file or project to check. If omitted, checks the project in the current directory.")
-    deps_parser = subparsers.add_parser("deps", help="Show the dependency tree for a Clyp file or project.")
-    deps_parser.add_argument("file", type=str, nargs="?", default=None, help="Clyp file or project to analyze.")
-    init_parser = subparsers.add_parser("init", help="Initialize a new Clyp project.")
+    check_parser = subparsers.add_parser("check", help="Check Clyp files or directories for syntax errors. Example: clyp check main.clyp")
+    check_parser.add_argument("file", type=str, nargs="?", default=None, help="Clyp file or directory to check. If omitted, checks the current directory.")
+    deps_parser = subparsers.add_parser("deps", help="Show the dependency tree for a Clyp file or project. Example: clyp deps main.clyp")
+    deps_parser.add_argument("file", type=str, nargs="?", default=None, help="Clyp file or project directory to analyze.")
+    init_parser = subparsers.add_parser("init", help="Initialize a new Clyp project. Example: clyp init my-project")
     init_parser.add_argument("name", type=str, help="The name of the project.")
+    init_parser.add_argument("--template", type=str, default="default", help="Project template (default, library, web).")
+    
+    # Add script command
+    script_parser = subparsers.add_parser("script", help="Run a script defined in clyp.json. Example: clyp script build")
+    script_parser.add_argument("name", type=str, help="Name of the script to run.")
+    
+    # Add config command
+    config_parser = subparsers.add_parser("config", help="Show or validate clyp.json configuration. Example: clyp config")
+    config_parser.add_argument("--validate", action="store_true", help="Validate clyp.json format and structure.")
+    config_parser.add_argument("--show", action="store_true", help="Show the current configuration.")
+    
+    # Add dependency management commands
+    add_parser = subparsers.add_parser("add", help="Add a dependency to clyp.json. Example: clyp add math@1.0.0")
+    add_parser.add_argument("dependency", type=str, help="Dependency name[@version] to add.")
+    add_parser.add_argument("--dev", action="store_true", help="Add as development dependency.")
+    
+    remove_parser = subparsers.add_parser("remove", help="Remove a dependency from clyp.json. Example: clyp remove math")
+    remove_parser.add_argument("dependency", type=str, help="Dependency name to remove.")
+    remove_parser.add_argument("--dev", action="store_true", help="Remove from development dependencies.")
+    
     args = parser.parse_args()
     # ... existing code ...
 
@@ -324,17 +603,36 @@ def main():
         sys.exit(0)
 
     if args.command == "run":
-        file_path = os.path.abspath(args.file)
+        # Resolve input path - could be a file or directory project
+        resolved_path, is_directory_project = resolve_input_path(args.file)
+        
+        # Check if resolved path exists
+        if not os.path.exists(resolved_path):
+            if is_directory_project:
+                Log.error(f"[F100] Entry point file not found: {resolved_path}", file=sys.stderr)
+                Log.info("💡 Tip: Check the 'entry' field in your clyp.json file.", file=sys.stderr)
+            else:
+                Log.error(f"[F100] File or directory not found: {args.file}", file=sys.stderr)
+                if os.path.isdir(args.file):
+                    Log.info("💡 Tip: Directory found but no clyp.json with entry point. Create a clyp.json file or specify a .clyp file.", file=sys.stderr)
+                else:
+                    Log.info("💡 Tip: Check the file path and make sure the file exists.", file=sys.stderr)
+            sys.exit(1)
+        
+        file_path = resolved_path
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 clyp_code = f.read()
         except FileNotFoundError as e:
             code = get_error_code(e)
-            Log.error(f"[{code}] File {args.file} not found.", file=sys.stderr)
+            Log.error(f"[{code}] File {file_path} not found.", file=sys.stderr)
+            Log.info("💡 Tip: Check the file path and make sure the file exists.", file=sys.stderr)
             sys.exit(1)
         except (IOError, UnicodeDecodeError) as e:
             code = get_error_code(e)
             Log.error(f"[{code}] Error reading file {args.file}: {e}", file=sys.stderr)
+            if isinstance(e, UnicodeDecodeError):
+                Log.info("💡 Tip: Make sure the file is saved with UTF-8 encoding.", file=sys.stderr)
             sys.exit(1)
         except Exception as e:
             code = get_error_code(e)
@@ -426,59 +724,296 @@ def main():
             Log.error(f"Directory '{project_name}' already exists.")
             sys.exit(1)
         os.makedirs(project_root)
+        
+        # Enhanced clyp.json with comprehensive metadata
         config = {
             "name": project_name,
             "version": "0.1.0",
-            "entry": "src/main.clyp"
+            "description": f"A new Clyp project: {project_name}",
+            "entry": "src/main.clyp",
+            "author": {
+                "name": "Your Name",
+                "email": "you@example.com"
+            },
+            "license": "MIT",
+            "keywords": ["clyp", "project"],
+            "repository": {
+                "type": "git",
+                "url": f"https://github.com/yourusername/{project_name}.git"
+            },
+            "dependencies": {},
+            "devDependencies": {},
+            "scripts": {
+                "build": "python -m clyp.cli check .",
+                "test": "python -m clyp.cli run tests/test_main.clyp",
+                "format": "python -m clyp.cli format src/",
+                "clean": "rm -rf build/ dist/ .clyp-cache/"
+            },
+            "build": {
+                "outputDir": "build",
+                "transpileOnly": False,
+                "sourceMap": True
+            },
+            "imports": {
+                "paths": {
+                    "@src/*": ["src/*"],
+                    "@lib/*": ["lib/*"],
+                    "@tests/*": ["tests/*"]
+                }
+            },
+            "tools": {
+                "formatter": {
+                    "lineLength": 88,
+                    "indentSize": 4,
+                    "useTabs": False
+                },
+                "linter": {
+                    "strict": False,
+                    "rules": {
+                        "requireReturnTypes": True,
+                        "enforceNamingConventions": True
+                    }
+                }
+            }
         }
+        
         config_path = os.path.join(project_root, "clyp.json")
+        
+        # Save clean clyp.json without comments and with proper scripts
+        config_content = """{
+  "name": \"""" + project_name + """\",
+  "version": "0.1.0",
+  "description": "A new Clyp project: """ + project_name + """\",
+  "entry": "src/main.clyp",
+  "author": {
+    "name": "Your Name",
+    "email": "you@example.com"
+  },
+  "license": "MIT",
+  "keywords": ["clyp", "project"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/""" + project_name + """.git"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "scripts": {
+    "build": "clyp check .",
+    "test": "clyp run tests/test_main.clyp",
+    "format": "clyp format src/",
+    "clean": "rm -rf build/ dist/ .clyp-cache/"
+  },
+  "build": {
+    "outputDir": "build",
+    "transpileOnly": false,
+    "sourceMap": true
+  },
+  "imports": {
+    "paths": {
+      "@src/*": ["src/*"],
+      "@lib/*": ["lib/*"],
+      "@tests/*": ["tests/*"]
+    }
+  },
+  "tools": {
+    "formatter": {
+      "lineLength": 88,
+      "indentSize": 4,
+      "useTabs": false
+    },
+    "linter": {
+      "strict": false,
+      "rules": {
+        "requireReturnTypes": true,
+        "enforceNamingConventions": true
+      }
+    }
+  }
+}"""
+        
         with open(config_path, "w") as f:
-            json.dump(config, f, indent=4)
+            f.write(config_content)
+        
         src_dir = os.path.join(project_root, "src")
         os.makedirs(src_dir)
         main_clyp_path = os.path.join(src_dir, "main.clyp")
         with open(main_clyp_path, "w") as f:
+            f.write('# Welcome to Clyp!\n')
+            f.write('# This is a simple Hello World program\n')
+            f.write('\n')
             f.write('print("Hello from Clyp!")\n')
+            f.write('\n')
+            f.write('# Try defining a function:\n')
+            f.write('# function greet(str name) returns str {\n')
+            f.write('#     return "Hello, " + name + "!";\n')
+            f.write('# }\n')
+            f.write('# print(greet("World"));\n')
+        
+        # Create tests directory with example test
+        tests_dir = os.path.join(project_root, "tests")
+        os.makedirs(tests_dir)
+        test_main_path = os.path.join(tests_dir, "test_main.clyp")
+        with open(test_main_path, "w") as f:
+            f.write('# Example test file\n')
+            f.write('# TODO: Add actual tests\n')
+            f.write('print("All tests passed!");\n')
+        
         gitignore_path = os.path.join(project_root, ".gitignore")
         with open(gitignore_path, "w") as f:
+            f.write("# Build outputs\n")
+            f.write("build/\n")
             f.write("dist/\n")
             f.write(".clyp-cache/\n")
+            f.write("\n")
+            f.write("# Python bytecode\n")
+            f.write("__pycache__/\n")
+            f.write("*.pyc\n")
+            f.write("*.pyo\n")
+            f.write("\n")
+            f.write("# IDE files\n")
+            f.write(".vscode/\n")
+            f.write(".idea/\n")
+            f.write("*.swp\n")
+            f.write("*.swo\n")
+            f.write("\n")
+            f.write("# OS files\n")
+            f.write(".DS_Store\n")
+            f.write("Thumbs.db\n")
+            f.write("\n")
+            f.write("# Clyp-specific\n")
+            f.write("*.clyp.temp\n")
+            f.write(".clyp-debug/\n")
+        
+        # Create README.md
+        readme_path = os.path.join(project_root, "README.md")
+        with open(readme_path, "w") as f:
+            f.write(f"# {project_name}\n\n")
+            f.write(f"A new Clyp project: {project_name}\n\n")
+            f.write("## Getting Started\n\n")
+            f.write("```bash\n")
+            f.write("# Run the main program\n")
+            f.write("clyp run src/main.clyp\n\n")
+            f.write("# Run tests\n")
+            f.write("clyp run tests/test_main.clyp\n\n")
+            f.write("# Format code\n")
+            f.write("clyp format src/\n\n")
+            f.write("# Check project for errors\n")
+            f.write("clyp check .\n")
+            f.write("```\n\n")
+            f.write("## Project Structure\n\n")
+            f.write("```\n")
+            f.write(f"{project_name}/\n")
+            f.write("├── clyp.json          # Project configuration\n")
+            f.write("├── src/               # Source code\n")
+            f.write("│   └── main.clyp      # Main entry point\n")
+            f.write("├── tests/             # Test files\n")
+            f.write("│   └── test_main.clyp # Example test\n")
+            f.write("├── README.md          # This file\n")
+            f.write("└── .gitignore         # Git ignore rules\n")
+            f.write("```\n")
+        
         Log.success(f"Initialized Clyp project '{project_name}'")
         Log.info(f"Created project structure in: {project_root}")
-        Log.info("You can now `cd` into the directory and run `clyp <file.clyp>`. Interpreted mode is default.")
+        Log.info("Project includes:")
+        Log.info("  • clyp.json with metadata, scripts, and build config")
+        Log.info("  • Source directory with main.clyp")
+        Log.info("  • Tests directory with example test")
+        Log.info("  • README.md with getting started guide")
+        Log.info("  • .gitignore")
+        Log.info(f"Run 'cd {project_name} && clyp run src/main.clyp' to get started!")
     elif args.command == "format":
-        file_path = os.path.abspath(args.file)
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                clyp_code = f.read()
-        except Exception as e:
-            code = get_error_code(e)
-            Log.error(f"[{code}] Error reading file {args.file}: {e}", file=sys.stderr)
-            sys.exit(1)
-        try:
-            if VERBOSE:
-                Log.info("Calling format_clyp_code()")
-                Log.info("=== ORIGINAL CLYP ===")
-                print(clyp_code)
-            formatted = format_clyp_code(clyp_code)
-            if VERBOSE:
-                Log.info("=== FORMATTED CLYP ===")
-                print(formatted)
-        except Exception as e:
-            code = get_error_code(e)
-            Log.error(f"[{code}] Formatting failed: {e}", file=sys.stderr)
-            sys.exit(1)
-        if args.print or args.no_write:
-            print(formatted)
+        input_path = os.path.abspath(args.file)
+        
+        # Handle directory projects and regular directories
+        if os.path.isdir(input_path):
+            # Check if it's a directory project with clyp.json
+            config_path = os.path.join(input_path, "clyp.json")
+            if os.path.exists(config_path):
+                # Directory project - format all .clyp files in the project
+                formatted_count = 0
+                for root, _, files in os.walk(input_path):
+                    for file in files:
+                        if file.endswith('.clyp'):
+                            file_path = os.path.join(root, file)
+                            try:
+                                with open(file_path, "r", encoding="utf-8") as f:
+                                    clyp_code = f.read()
+                                formatted = format_clyp_code(clyp_code)
+                                
+                                if args.print or args.no_write:
+                                    print(f"=== {os.path.relpath(file_path, input_path)} ===")
+                                    print(formatted)
+                                    print()
+                                else:
+                                    with open(file_path, "w", encoding="utf-8") as f:
+                                        f.write(formatted)
+                                    formatted_count += 1
+                            except Exception as e:
+                                code = get_error_code(e)
+                                Log.error(f"[{code}] Error formatting {file_path}: {e}", file=sys.stderr)
+                
+                if not (args.print or args.no_write):
+                    Log.success(f"Formatted {formatted_count} files in project directory.")
+            else:
+                # Regular directory - format all .clyp files
+                formatted_count = 0
+                for root, _, files in os.walk(input_path):
+                    for file in files:
+                        if file.endswith('.clyp'):
+                            file_path = os.path.join(root, file)
+                            try:
+                                with open(file_path, "r", encoding="utf-8") as f:
+                                    clyp_code = f.read()
+                                formatted = format_clyp_code(clyp_code)
+                                
+                                if args.print or args.no_write:
+                                    print(f"=== {os.path.relpath(file_path, input_path)} ===")
+                                    print(formatted)
+                                    print()
+                                else:
+                                    with open(file_path, "w", encoding="utf-8") as f:
+                                        f.write(formatted)
+                                    formatted_count += 1
+                            except Exception as e:
+                                code = get_error_code(e)
+                                Log.error(f"[{code}] Error formatting {file_path}: {e}", file=sys.stderr)
+                
+                if not (args.print or args.no_write):
+                    Log.success(f"Formatted {formatted_count} files in directory.")
         else:
+            # Single file - original behavior
+            file_path = input_path
             try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(formatted)
-                Log.success(f"Formatted {args.file} in place.")
+                with open(file_path, "r", encoding="utf-8") as f:
+                    clyp_code = f.read()
             except Exception as e:
                 code = get_error_code(e)
-                Log.error(f"[{code}] Error writing file {args.file}: {e}", file=sys.stderr)
+                Log.error(f"[{code}] Error reading file {args.file}: {e}", file=sys.stderr)
                 sys.exit(1)
+            try:
+                if VERBOSE:
+                    Log.info("Calling format_clyp_code()")
+                    Log.info("=== ORIGINAL CLYP ===")
+                    print(clyp_code)
+                formatted = format_clyp_code(clyp_code)
+                if VERBOSE:
+                    Log.info("=== FORMATTED CLYP ===")
+                    print(formatted)
+            except Exception as e:
+                code = get_error_code(e)
+                Log.error(f"[{code}] Formatting failed: {e}", file=sys.stderr)
+                sys.exit(1)
+            if args.print or args.no_write:
+                print(formatted)
+            else:
+                try:
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(formatted)
+                    Log.success(f"Formatted {args.file} in place.")
+                except Exception as e:
+                    code = get_error_code(e)
+                    Log.error(f"[{code}] Error writing file {args.file}: {e}", file=sys.stderr)
+                    sys.exit(1)
     elif args.command == "py2clyp":
         from clyp.transpiler import transpile_to_clyp
         import difflib
@@ -664,17 +1199,55 @@ def main():
             return True
 
         if args.file:
-            check_file(os.path.abspath(args.file))
+            input_path = os.path.abspath(args.file)
+            
+            if os.path.isfile(input_path):
+                # Single file
+                if not check_file(input_path):
+                    sys.exit(1)
+            elif os.path.isdir(input_path):
+                # Directory - check for project or all .clyp files
+                config_path = os.path.join(input_path, "clyp.json")
+                if os.path.exists(config_path):
+                    # Directory project - check based on entry point and project structure
+                    Log.info(f"Checking directory project: {input_path}")
+                
+                # Check all .clyp files in the directory
+                ok = True
+                checked_count = 0
+                for dirpath, _, filenames in os.walk(input_path):
+                    for f in filenames:
+                        if f.endswith(".clyp"):
+                            file_path = os.path.join(dirpath, f)
+                            if not check_file(file_path):
+                                ok = False
+                            checked_count += 1
+                
+                if checked_count == 0:
+                    Log.warn("No .clyp files found to check.")
+                elif ok:
+                    Log.success(f"All {checked_count} files OK.")
+                else:
+                    sys.exit(1)
+            else:
+                Log.error(f"[F100] Path not found: {args.file}")
+                sys.exit(1)
         else:
-            # Check all .clyp files in project
+            # Check all .clyp files in current directory project
             ok = True
+            checked_count = 0
             for dirpath, _, filenames in os.walk(os.getcwd()):
                 for f in filenames:
                     if f.endswith(".clyp"):
-                        if not check_file(os.path.join(dirpath, f)):
+                        file_path = os.path.join(dirpath, f)
+                        if not check_file(file_path):
                             ok = False
-            if ok:
-                Log.success("All files OK.")
+                        checked_count += 1
+            
+            if checked_count == 0:
+                Log.warn("No .clyp files found to check.")
+            elif ok:
+                Log.success(f"All {checked_count} files OK.")
             else:
                 sys.exit(1)
     elif args.command == "deps":
@@ -706,20 +1279,116 @@ def main():
                 print("  " * (level + 1) + f"[error: {e}]")
 
         if args.file:
-            print_deps(args.file)
+            input_path = os.path.abspath(args.file)
+            
+            if os.path.isfile(input_path):
+                # Single file
+                print_deps(input_path)
+            elif os.path.isdir(input_path):
+                # Directory - check if it's a project directory
+                entry_point = resolve_project_entry_point(input_path)
+                if entry_point:
+                    # Directory project - show deps for entry point
+                    Log.info(f"Analyzing dependencies for project entry point: {entry_point}")
+                    print_deps(entry_point)
+                else:
+                    # Regular directory - no specific entry point
+                    Log.error(f"Directory {input_path} is not a Clyp project (no clyp.json with entry point).")
+                    Log.info("💡 Tip: Specify a .clyp file or run from a directory with clyp.json", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                Log.error(f"[F100] Path not found: {args.file}")
+                sys.exit(1)
         else:
-            # Try to find entry from clyp.json
-            config_path = os.path.join(os.getcwd(), "clyp.json")
-            if os.path.exists(config_path):
-                with open(config_path, "r") as f:
-                    config = json.load(f)
+            # Try to find entry from clyp.json with enhanced config loading
+            config = get_project_config()
+            if config:
                 entry = config.get("entry")
                 if entry:
-                    print_deps(entry)
+                    entry_path = resolve_config_path(entry, config)
+                    if os.path.exists(entry_path):
+                        print_deps(entry_path)
+                    else:
+                        Log.error(f"Entry file '{entry}' not found at {entry_path}")
+                        sys.exit(1)
                 else:
                     Log.error("No entry found in clyp.json.")
+                    Log.info("💡 Tip: Add an 'entry' field to your clyp.json file, e.g., \"entry\": \"src/main.clyp\"", file=sys.stderr)
+                    sys.exit(1)
             else:
                 Log.error("No file specified and no clyp.json found.")
+                Log.info("💡 Tip: Either specify a file (clyp deps main.clyp) or run from a Clyp project directory", file=sys.stderr)
+                sys.exit(1)
+    elif args.command == "script":
+        # Run a script from clyp.json
+        config = get_project_config()
+        if not config:
+            Log.error("No clyp.json found in current directory or parent directories.")
+            Log.info("💡 Tip: Run 'clyp init <project-name>' to create a new project", file=sys.stderr)
+            sys.exit(1)
+        
+        if not run_project_script(args.name, config):
+            sys.exit(1)
+    elif args.command == "config":
+        # Show or validate clyp.json configuration
+        config = get_project_config()
+        if not config:
+            Log.error("No clyp.json found in current directory or parent directories.")
+            sys.exit(1)
+        
+        if args.validate:
+            Log.success("clyp.json is valid")
+            # Additional validations
+            entry = config.get("entry")
+            if entry:
+                entry_path = resolve_config_path(entry, config)
+                if not os.path.exists(entry_path):
+                    Log.warn(f"Entry file '{entry}' does not exist")
+                else:
+                    Log.success(f"Entry file '{entry}' exists")
+            
+            # Validate scripts
+            scripts = config.get("scripts", {})
+            if scripts:
+                Log.info(f"Found {len(scripts)} script(s): {', '.join(scripts.keys())}")
+            
+            # Validate dependencies
+            deps = config.get("dependencies", {})
+            dev_deps = config.get("devDependencies", {})
+            if deps:
+                Log.info(f"Found {len(deps)} dependenc(ies)")
+            if dev_deps:
+                Log.info(f"Found {len(dev_deps)} dev dependenc(ies)")
+                
+        if args.show or not (args.validate):
+            print(json.dumps(config, indent=2))
+    elif args.command == "add":
+        # Add a dependency to clyp.json
+        config_path = find_config_file()
+        if not config_path:
+            Log.error("No clyp.json found in current directory or parent directories.")
+            Log.info("💡 Tip: Run 'clyp init <project-name>' to create a new project", file=sys.stderr)
+            sys.exit(1)
+        
+        config = load_clyp_config(config_path)
+        if not config:
+            sys.exit(1)
+        
+        if not add_dependency(args.dependency, config, config_path, args.dev):
+            sys.exit(1)
+    elif args.command == "remove":
+        # Remove a dependency from clyp.json
+        config_path = find_config_file()
+        if not config_path:
+            Log.error("No clyp.json found in current directory or parent directories.")
+            sys.exit(1)
+        
+        config = load_clyp_config(config_path)
+        if not config:
+            sys.exit(1)
+        
+        if not remove_dependency(args.dependency, config, config_path, args.dev):
+            sys.exit(1)
     else:
         parser.print_help()
 

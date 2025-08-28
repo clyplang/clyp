@@ -122,11 +122,17 @@ def precheck_clyp_code(clyp_code: str, verbose: bool = False) -> List[str]:
     for i, line in enumerate(clyp_code.splitlines()):
         if def_pattern.match(line):
             errors.append(colorize(
-                f"ERROR [ A101 ] Python-style function definition detected on line {i+1}: '{line.strip()}'"
+                f"ERROR [ A101 ] Python-style function definition detected on line {i+1}: '{line.strip()}'\n"
+                "💡 Tip: Use Clyp function syntax instead\n"
+                "💡 Change: def func_name(args) -> return_type:\n"
+                "💡 To: function func_name(args) returns return_type {{"
             ))
         if repeat_deprecated_pattern.match(line):
             errors.append(colorize(
-                f"WARNING [ W501 ] Deprecated syntax 'repeat [times] times' on line {i+1}: '{line.strip()}'. Use 'repeat times {{}}' instead."
+                f"WARNING [ W501 ] Deprecated syntax 'repeat [times] times' on line {i+1}: '{line.strip()}'\n"
+                "💡 Tip: Use modern Clyp repeat syntax instead\n"
+                "💡 Change: repeat [n] times\n"
+                "💡 To: repeat n {{ }}"
             ))
         assign_match = assignment_pattern.match(line)
         if assign_match:
@@ -134,32 +140,47 @@ def precheck_clyp_code(clyp_code: str, verbose: bool = False) -> List[str]:
             value = value.strip()
             if var_type == "int" and not int_literal_pattern.match(value):
                 errors.append(colorize(
-                    f"ERROR [ C100 ] Type error on line {i+1}: Expected int, got '{value}'"
+                    f"ERROR [ C100 ] Type error on line {i+1}: Expected int, got '{value}'\n"
+                    "💡 Tip: Use integer literal (e.g., 42, 0, -10)\n"
+                    "💡 Check for quotes around number or decimal points"
                 ))
             elif var_type == "float" and not float_literal_pattern.match(value):
                 errors.append(colorize(
-                    f"ERROR [ C100 ] Type error on line {i+1}: Expected float, got '{value}'"
+                    f"ERROR [ C100 ] Type error on line {i+1}: Expected float, got '{value}'\n"
+                    "💡 Tip: Use decimal number format (e.g., 3.14, 0.0, -2.5)\n"
+                    "💡 Float literals must have decimal points"
                 ))
             elif var_type == "str" and not str_literal_pattern.match(value):
                 errors.append(colorize(
-                    f"ERROR [ C100 ] Type error on line {i+1}: Expected str, got '{value}'"
+                    f"ERROR [ C100 ] Type error on line {i+1}: Expected str, got '{value}'\n"
+                    "💡 Tip: String literals must be in quotes (e.g., \"hello\", 'world')\n"
+                    "💡 Check for missing or unmatched quotes"
                 ))
             elif var_type == "bool" and not bool_literal_pattern.match(value):
                 errors.append(colorize(
-                    f"ERROR [ C100 ] Type error on line {i+1}: Expected bool, got '{value}'"
+                    f"ERROR [ C100 ] Type error on line {i+1}: Expected bool, got '{value}'\n"
+                    "💡 Tip: Use boolean literals 'true' or 'false' (lowercase)\n"
+                    "💡 Note: Clyp uses 'true'/'false', not 'True'/'False'"
                 ))
             elif var_type == "list" and not list_literal_pattern.match(value):
                 errors.append(colorize(
-                    f"ERROR [ C101 ] Type error on line {i+1}: Expected list, got '{value}'"
+                    f"ERROR [ C101 ] Type error on line {i+1}: Expected list, got '{value}'\n"
+                    "💡 Tip: Use list literal syntax [item1, item2, ...]\n"
+                    "💡 Example: [1, 2, 3] or [\"a\", \"b\", \"c\"]"
                 ))
             elif var_type == "dict" and not dict_literal_pattern.match(value):
                 errors.append(colorize(
-                    f"ERROR [ C102 ] Type error on line {i+1}: Expected dict, got '{value}'"
+                    f"ERROR [ C102 ] Type error on line {i+1}: Expected dict, got '{value}'\n"
+                    "💡 Tip: Use dictionary literal syntax {{key: value, ...}}\n"
+                    "💡 Example: {{\"name\": \"John\", \"age\": 30}}"
                 ))
         # Check for explicit 'self' argument in class methods
         if class_method_self_pattern.match(line):
             errors.append(colorize(
-                f"ERROR [ L100 ] 'self' argument should not be defined explicitly in class methods (line {i+1})"
+                f"ERROR [ L100 ] 'self' argument should not be defined explicitly in class methods (line {i+1})\n"
+                "💡 Tip: Clyp automatically provides 'self' in class methods\n"
+                "💡 Change: function myMethod(self, int x) returns str\n"
+                "💡 To: function myMethod(int x) returns str"
             ))
     return errors
 

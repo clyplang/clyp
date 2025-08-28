@@ -1,0 +1,22 @@
+# Basic Clyp features demonstration
+
+print("Basic Clyp Features Demo");
+
+# 1. Variable declarations  
+let name = "Alice";
+print("Hello, " + name + "!");
+
+# 2. Basic functions
+function greet(str person) returns str {
+    return "Greetings, " + person + "!";
+}
+
+print(greet("Bob"));
+
+# 3. Simple conditions
+let age = 25;
+if age is 25 {
+    print("Alice is 25 years old!");
+}
+
+print("Basic Features Demo Complete");
