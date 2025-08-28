@@ -31,12 +31,10 @@ def test_py2clyp_format(tmp_path, monkeypatch, capsys):
     result = _run_cli(
         ["py2clyp", str(py_file), "--format", "--print"], tmp_path, monkeypatch, capsys
     )
-    # Accept either Clyp or Python style output, but check for formatting error in stderr
-    assert "function add" in result.out or "def add" in result.out
-    # The formatter should emit an error about missing 'returns' clause
-    assert (
-        "Formatting failed" in result.err or "requires a 'returns' clause" in result.err
-    )
+    # The improved formatter should successfully format the transpiled code
+    assert "function add" in result.out
+    # Check that formatting was applied (spacing improvements)
+    assert "return a + b" in result.out  # Formatted with proper spacing
 
 
 def test_py2clyp_check_success(tmp_path, monkeypatch, capsys):
