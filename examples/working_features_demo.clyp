@@ -1,0 +1,113 @@
+# examples/working_features_demo.clyp
+# Demonstration of the new Clyp features that are currently working
+
+print("=== Clyp Enhanced Features Demo ===");
+
+# 1. String interpolation (WORKING)
+let name = "Alice";
+let age = 25;
+print("Hello {name}, you are {age} years old!");
+
+# 2. Range expressions (WORKING)
+print("Counting 1 to 5:");
+for i in 1..5 {
+    print("Number: {i}");
+}
+
+print("Exclusive range 1 to 5:");
+for j in 1..<5 {
+    print("Exclusive: {j}");
+}
+
+# 3. Lambda expressions (WORKING)
+let double = x => x * 2;
+let add = (a, b) => a + b;
+
+print("Double of 7: {double(7)}");
+print("Add 3 + 4: {add(3, 4)}");
+
+# 4. Enhanced functions with optional types and defaults (WORKING)
+function greet(str? name = "World", bool formal = false) returns str {
+    let greeting = formal ? "Good day" : "Hello";
+    let target = name ?? "friend";
+    return "{greeting}, {target}!";
+}
+
+print(greet());
+print(greet("Bob"));
+print(greet("Alice", true));
+
+# 5. Type aliases (WORKING)
+type UserId = int;
+type UserName = str;
+
+UserId userId = 123;
+UserName userName = "alice";
+print("User {userName} has ID {userId}");
+
+# 6. Enhanced class with optional types
+class User {
+    int id;
+    str name;
+    str? email = null;
+    
+    function display(str? prefix = "User") returns str {
+        let emailText = email ?? "no email";
+        return "{prefix}: {name} ({emailText})";
+    }
+}
+
+let user = User();
+user.id = 1;
+user.name = "Bob";
+user.email = "bob@example.com";
+print(user.display());
+print(user.display("Customer"));
+
+# 7. Using new stdlib functions
+print("\n=== New Stdlib Functions ===");
+
+# Debug utility
+let debugValue = debug(42, "test value");
+
+# JSON operations
+let data = {"name": "Charlie", "scores": [85, 92, 78]};
+let jsonStr = json_stringify(data, pretty: true);
+print("JSON data: {jsonStr}");
+
+let parsed = json_parse('{"message": "Hello World"}');
+print("Parsed message: {parsed["message"]}");
+
+# Math utilities
+let clamped = clamp(15, 0, 10);
+let interpolated = lerp(0, 100, 0.5);
+print("Clamped 15 to 0-10: {clamped}");
+print("Lerp between 0-100 at 0.5: {interpolated}");
+
+# Collection utilities
+let numbers = [1, 2, 3, 2, 4, 5, 4];
+let uniqueNumbers = unique(numbers);
+let [evens, odds] = partition(numbers, x => x % 2 == 0);
+
+print("Original: {numbers}");
+print("Unique: {uniqueNumbers}");
+print("Evens: {evens}");
+print("Odds: {odds}");
+
+# Formatting utilities
+let fileSize = 1024 * 1024 * 2.5;
+let duration = 3665;
+print("File size: {format_bytes(fileSize)}");
+print("Duration: {format_duration(duration)}");
+
+# Dictionary utilities
+let config = {"theme": "dark", "lang": "en"};
+let defaults = {"theme": "light", "lang": "en", "notifications": true};
+let merged = deep_merge(defaults, config);
+print("Merged config: {json_stringify(merged)}");
+
+let theme = get_nested(merged, "theme", "unknown");
+print("Current theme: {theme}");
+
+print("\n=== Demo Complete ===");
+print("Successfully demonstrated multiple new Clyp features!");
