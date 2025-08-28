@@ -8,7 +8,7 @@ long_description = Path("README.md").read_text(encoding="utf-8")
 
 setup(
     name="clyp",
-    version="2.0.0",
+    version="2.1.0",
     author="CodeSoft",
     packages=["clyp"],
     install_requires=["typeguard", "click", "requests", "ycpm", "cython", "black", "orjson"],
