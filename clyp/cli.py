@@ -273,8 +273,8 @@ def load_clyp_config(config_path: str) -> Optional[Dict[str, Any]]:
             Log.warn("[V101] clyp.json missing 'name' field")
         if "version" not in config:
             Log.warn("[V102] clyp.json missing 'version' field")
-        if "entry" not in config:
-            Log.warn("[V103] clyp.json missing 'entry' field")
+        if "entry" not in config and "main" not in config:
+            Log.warn("[V103] clyp.json missing 'entry' or 'main' field")
             
         return config
         
@@ -422,7 +422,8 @@ def resolve_project_entry_point(directory_path: str) -> Optional[str]:
     if not config:
         return None
     
-    entry_point = config.get("entry")
+    # Try 'entry' first, then 'main' for compatibility
+    entry_point = config.get("entry") or config.get("main")
     if not entry_point:
         return None
     

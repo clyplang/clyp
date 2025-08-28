@@ -1,0 +1,11 @@
+# A simple "Hello, World!" program in Clyp.
+# It demonstrates variable declaration, function definition, and printing to the console.
+
+let name = "World";
+print("Hello, " + name + "!");
+
+function greet(str name) returns str {
+    return "Greetings, " + name + "!";
+}
+
+print(greet("Clyp Developer"));

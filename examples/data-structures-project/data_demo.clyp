@@ -1,0 +1,30 @@
+# Data Structures Demo in Clyp
+print("Clyp Data Structures Demo");
+
+# 1. Working with Lists
+print("1. List Operations:");
+let numbers = [1, 2, 3, 4, 5];
+let names = ["Alice", "Bob", "Charlie"];
+
+print("Numbers listed");
+print("Names listed");
+
+# 2. Working with Variables
+print("2. Variable Operations:");
+let person_name = "Alice Johnson";
+let person_city = "New York";
+
+print("Person: " + person_name);
+print("City: " + person_city);
+
+# 3. Basic Functions
+print("3. Basic Functions:");
+
+function getPersonInfo(str name) returns str {
+    return name + " is a person";
+}
+
+print(getPersonInfo("Bob"));
+print(getPersonInfo("Charlie"));
+
+print("Data Structures Demo Complete");

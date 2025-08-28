@@ -1,0 +1,13 @@
+{
+  "name": "hello-world-project",
+  "version": "1.0.0",
+  "description": "A simple Hello World project demonstrating basic Clyp syntax",
+  "main": "main.clyp",
+  "author": "Clyp Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "clyp run main.clyp",
+    "test": "clyp check .",
+    "format": "clyp format ."
+  }
+}
