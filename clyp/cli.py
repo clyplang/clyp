@@ -911,14 +911,14 @@ def main():
             f.write("└── .gitignore         # Git ignore rules\n")
             f.write("```\n")
         
-        Log.success(f"Initialized comprehensive Clyp project '{project_name}'")
+        Log.success(f"Initialized Clyp project '{project_name}'")
         Log.info(f"Created project structure in: {project_root}")
         Log.info("Project includes:")
-        Log.info("  • Enhanced clyp.json with metadata, scripts, and build config")
+        Log.info("  • clyp.json with metadata, scripts, and build config")
         Log.info("  • Source directory with main.clyp")
         Log.info("  • Tests directory with example test")
         Log.info("  • README.md with getting started guide")
-        Log.info("  • Comprehensive .gitignore")
+        Log.info("  • .gitignore")
         Log.info(f"Run 'cd {project_name} && clyp run src/main.clyp' to get started!")
     elif args.command == "format":
         input_path = os.path.abspath(args.file)
