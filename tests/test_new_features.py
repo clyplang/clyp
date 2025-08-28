@@ -192,7 +192,7 @@ class TestExceptionHandling:
         '''
         python_code = parse_clyp(clyp_code)
         assert 'try:' in python_code
-        assert 'except Exception:' in python_code
+        assert 'except Exception as e:' in python_code
 
     def test_try_finally_block(self):
         clyp_code = '''

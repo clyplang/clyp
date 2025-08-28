@@ -884,3 +884,292 @@ def format_duration(seconds: Union[int, float]) -> str:
         parts.append(f"{remaining_seconds:.0f}s")
     
     return " ".join(parts)
+
+
+@typechecked  
+def async_map(func: Callable[[Any], Any], items: List[Any]) -> List[Any]:
+    """
+    Apply a function to all items in a list asynchronously (simulated).
+    
+    :param func: Function to apply
+    :param items: List of items to process
+    :return: List of results
+    """
+    import asyncio
+    
+    async def async_apply():
+        tasks = [asyncio.create_task(asyncio.coroutine(lambda: func(item))()) for item in items]
+        return await asyncio.gather(*tasks)
+    
+    try:
+        return asyncio.run(async_apply())
+    except Exception:
+        # Fallback to synchronous processing
+        return [func(item) for item in items]
+
+
+@typechecked
+def pipe(*functions: Callable[[Any], Any]) -> Callable[[Any], Any]:
+    """
+    Create a pipeline of functions where output of one becomes input of next.
+    
+    :param functions: Functions to chain together
+    :return: Composed function
+    """
+    def pipeline(value: Any) -> Any:
+        result = value
+        for func in functions:
+            result = func(result)
+        return result
+    return pipeline
+
+
+@typechecked
+def compose(*functions: Callable[[Any], Any]) -> Callable[[Any], Any]:
+    """
+    Compose functions from right to left (mathematical composition).
+    
+    :param functions: Functions to compose
+    :return: Composed function
+    """
+    def composition(value: Any) -> Any:
+        result = value
+        for func in reversed(functions):
+            result = func(result)
+        return result
+    return composition
+
+
+@typechecked
+def curry(func: Callable[..., Any]) -> Callable[..., Any]:
+    """
+    Convert a function to accept arguments one at a time.
+    
+    :param func: Function to curry
+    :return: Curried function
+    """
+    def curried(*args: Any, **kwargs: Any) -> Any:
+        import inspect
+        sig = inspect.signature(func)
+        param_count = len([p for p in sig.parameters.values() if p.default == p.empty])
+        
+        if len(args) + len(kwargs) >= param_count:
+            return func(*args, **kwargs)
+        else:
+            def partial(*more_args: Any, **more_kwargs: Any) -> Any:
+                return curried(*(args + more_args), **{**kwargs, **more_kwargs})
+            return partial
+    return curried
+
+
+@typechecked
+def memoize_with_ttl(ttl_seconds: int = 300) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """
+    Memoize function results with time-to-live expiration.
+    
+    :param ttl_seconds: Time to live for cached results in seconds
+    :return: Decorator function
+    """
+    import time
+    
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        cache: Dict[str, Tuple[Any, float]] = {}
+        
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            key = f"{args}_{kwargs}"
+            current_time = time.time()
+            
+            if key in cache:
+                value, timestamp = cache[key]
+                if current_time - timestamp < ttl_seconds:
+                    return value
+                else:
+                    del cache[key]
+            
+            result = func(*args, **kwargs)
+            cache[key] = (result, current_time)
+            return result
+        
+        return wrapper
+    return decorator
+
+
+@typechecked
+def tap(func: Callable[[Any], None]) -> Callable[[Any], Any]:
+    """
+    Apply a side effect function and return the original value (useful for debugging).
+    
+    :param func: Side effect function to apply
+    :return: Function that applies side effect but returns original value
+    """
+    def tapper(value: Any) -> Any:
+        func(value)
+        return value
+    return tapper
+
+
+@typechecked
+def when(condition: Callable[[Any], bool], action: Callable[[Any], Any]) -> Callable[[Any], Any]:
+    """
+    Conditionally apply a function based on a predicate.
+    
+    :param condition: Predicate function
+    :param action: Function to apply if condition is true
+    :return: Function that conditionally applies action
+    """
+    def conditional(value: Any) -> Any:
+        if condition(value):
+            return action(value)
+        return value
+    return conditional
+
+
+@typechecked
+def unless(condition: Callable[[Any], bool], action: Callable[[Any], Any]) -> Callable[[Any], Any]:
+    """
+    Apply a function unless a condition is true.
+    
+    :param condition: Predicate function
+    :param action: Function to apply if condition is false
+    :return: Function that conditionally applies action
+    """
+    def conditional(value: Any) -> Any:
+        if not condition(value):
+            return action(value)
+        return value
+    return conditional
+
+
+@typechecked
+def safe_get(obj: Union[Dict[str, Any], List[Any]], key: Union[str, int], default: Any = None) -> Any:
+    """
+    Safely get a value from a dictionary or list without raising exceptions.
+    
+    :param obj: Dictionary or list to get value from
+    :param key: Key or index to access
+    :param default: Default value if key doesn't exist
+    :return: Value or default
+    """
+    try:
+        return obj[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+@typechecked
+def safe_call(func: Callable[..., Any], *args: Any, default: Any = None, **kwargs: Any) -> Any:
+    """
+    Safely call a function, returning a default value if it raises an exception.
+    
+    :param func: Function to call
+    :param args: Positional arguments
+    :param default: Default value if function raises exception
+    :param kwargs: Keyword arguments
+    :return: Function result or default value
+    """
+    try:
+        return func(*args, **kwargs)
+    except Exception:
+        return default
+
+
+@typechecked
+def chain(*iterables: List[Any]) -> List[Any]:
+    """
+    Chain multiple iterables into a single list.
+    
+    :param iterables: Iterables to chain
+    :return: Flattened list
+    """
+    result = []
+    for iterable in iterables:
+        result.extend(iterable)
+    return result
+
+
+@typechecked
+def take(n: int, iterable: List[Any]) -> List[Any]:
+    """
+    Take the first n elements from an iterable.
+    
+    :param n: Number of elements to take
+    :param iterable: Source iterable
+    :return: List of first n elements
+    """
+    return list(iterable[:n])
+
+
+@typechecked
+def drop(n: int, iterable: List[Any]) -> List[Any]:
+    """
+    Drop the first n elements from an iterable.
+    
+    :param n: Number of elements to drop
+    :param iterable: Source iterable
+    :return: List without first n elements
+    """
+    return list(iterable[n:])
+
+
+@typechecked
+def take_while(predicate: Callable[[Any], bool], iterable: List[Any]) -> List[Any]:
+    """
+    Take elements from an iterable while predicate is true.
+    
+    :param predicate: Function that returns True to continue taking
+    :param iterable: Source iterable
+    :return: List of elements taken while predicate was true
+    """
+    result = []
+    for item in iterable:
+        if predicate(item):
+            result.append(item)
+        else:
+            break
+    return result
+
+
+@typechecked
+def drop_while(predicate: Callable[[Any], bool], iterable: List[Any]) -> List[Any]:
+    """
+    Drop elements from an iterable while predicate is true.
+    
+    :param predicate: Function that returns True to continue dropping
+    :param iterable: Source iterable
+    :return: List of remaining elements after dropping
+    """
+    result = []
+    dropping = True
+    for item in iterable:
+        if dropping and predicate(item):
+            continue
+        dropping = False
+        result.append(item)
+    return result
+
+
+@typechecked
+def find_index(predicate: Callable[[Any], bool], iterable: List[Any]) -> int:
+    """
+    Find the index of the first element that satisfies the predicate.
+    
+    :param predicate: Function that returns True for matching element
+    :param iterable: Source iterable
+    :return: Index of first matching element, -1 if not found
+    """
+    for i, item in enumerate(iterable):
+        if predicate(item):
+            return i
+    return -1
+
+
+@typechecked
+def count_by(predicate: Callable[[Any], bool], iterable: List[Any]) -> int:
+    """
+    Count elements that satisfy a predicate.
+    
+    :param predicate: Function that returns True for elements to count
+    :param iterable: Source iterable
+    :return: Count of matching elements
+    """
+    return sum(1 for item in iterable if predicate(item))

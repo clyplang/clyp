@@ -17,49 +17,149 @@ import clyp.stdlib as stdlib
 from clyp.ErrorHandling import ClypSyntaxError
 
 
+def convert_clyp_params_to_python(params: str) -> str:
+    """Convert Clyp function parameters to Python parameters."""
+    if not params.strip():
+        return ""
+    
+    param_list = []
+    for param in params.split(','):
+        param = param.strip()
+        if not param:
+            continue
+            
+        # Handle typed parameters: int x, str? name = "default"
+        # Parse: [type?] name [= default]
+        parts = param.split('=', 1)
+        param_part = parts[0].strip()
+        default_value = parts[1].strip() if len(parts) > 1 else None
+        
+        # Extract type and name
+        type_name_parts = param_part.split()
+        if len(type_name_parts) == 2:
+            param_type, param_name = type_name_parts
+            # Handle optional types (str? -> Optional[str])
+            if param_type.endswith('?'):
+                param_type = f"Optional[{param_type[:-1]}]"
+            if default_value:
+                param_list.append(f"{param_name}: {param_type} = {default_value}")
+            else:
+                param_list.append(f"{param_name}: {param_type}")
+        else:
+            # No type specified, just parameter name
+            param_name = param_part
+            if default_value:
+                param_list.append(f"{param_name} = {default_value}")
+            else:
+                param_list.append(param_name)
+    
+    return ", ".join(param_list)
+
+
 def _replace_keywords_outside_strings(line: str) -> str:
     """
     Replaces specific Clyp keywords with Python equivalents outside of string literals.
     Replaces 'unless' -> 'if not', 'is not' -> '!=', 'is' -> '==', 'else if' -> 'elif'.
     Also handles new Clyp syntax features like string interpolation, optional chaining, etc.
     """
-    # Split on simple single/double quoted strings (won't capture triple-quote groups inside)
-    parts = re.split(r'(".*?"|\'.*?\')', line)
+    # Enhanced string interpolation handling with nested quotes support
+    result = line
     
-    # Handle string interpolation in string parts (odd indices)
-    for i in range(1, len(parts), 2):
-        if parts[i].startswith('"') and parts[i].endswith('"'):
-            # Convert "Hello {name}" to f"Hello {name}"
-            if '{' in parts[i] and '}' in parts[i]:
-                parts[i] = 'f' + parts[i]
-        elif parts[i].startswith("'") and parts[i].endswith("'"):
-            # Convert 'Hello {name}' to f'Hello {name}'
-            if '{' in parts[i] and '}' in parts[i]:
-                parts[i] = 'f' + parts[i]
+    # Handle string interpolation with more complex pattern matching
+    def find_interpolated_strings(text):
+        """Find strings that contain braces for interpolation, handling nested quotes."""
+        strings_to_replace = []
+        i = 0
+        while i < len(text):
+            if text[i] in ['"', "'"]:
+                quote_char = text[i]
+                start_pos = i
+                i += 1
+                brace_count = 0
+                has_braces = False
+                
+                # Scan through the string content
+                while i < len(text):
+                    char = text[i]
+                    if char == quote_char and brace_count == 0:
+                        # End of string
+                        if has_braces:
+                            strings_to_replace.append((start_pos, i + 1, text[start_pos:i+1]))
+                        break
+                    elif char == '{':
+                        has_braces = True
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                    elif char == '\\':
+                        # Skip escaped character
+                        i += 1
+                    i += 1
+                else:
+                    # Reached end without closing quote
+                    break
+            i += 1
+        return strings_to_replace
     
-    # Handle code parts (even indices)
-    for i in range(0, len(parts), 2):
-        part = parts[i]
-        
-        # Original keyword replacements
-        part = re.sub(r"\bunless\b", "if not", part)
-        part = re.sub(r"\bis not\b", "!=", part)
-        part = re.sub(r"\bis\b", "==", part)
-        part = re.sub(r"\belse\s+if\b", "elif", part)
-        
-        # New language features
-        # Null coalescing: value ?? default -> value if value is not None else default
-        part = re.sub(r'(\w+)\s*\?\?\s*([^;,\)\]\}]+)', r'(\1 if \1 is not None else \2)', part)
-        
-        # Optional chaining: obj?.prop -> (obj.prop if obj is not None else None)
-        part = re.sub(r'(\w+)\?\\.(\w+)', r'(\1.\2 if \1 is not None else None)', part)
-        
-        # Range expressions: 1..10 -> range(1, 11), 1..<10 -> range(1, 10)
-        part = re.sub(r'(\d+)\.\.(<?)(\d+)', lambda m: f'range({m.group(1)}, {m.group(3)})' if m.group(2) else f'range({m.group(1)}, {int(m.group(3)) + 1})', part)
-        
-        parts[i] = part
+    # Find and replace interpolated strings
+    strings_to_replace = find_interpolated_strings(result)
     
-    return "".join(parts)
+    # Replace from end to start to maintain indices
+    for start, end, original in reversed(strings_to_replace):
+        if not original.startswith('f'):
+            replacement = 'f' + original
+            result = result[:start] + replacement + result[end:]
+    
+    # Process other language features BEFORE splitting on strings
+    # This way null coalescing can work across string boundaries
+    
+    # Original keyword replacements
+    result = re.sub(r"\bunless\b", "if not", result)
+    result = re.sub(r"\bis not\b", "!=", result)
+    result = re.sub(r"\bis\b", "==", result)
+    result = re.sub(r"\belse\s+if\b", "elif", result)
+    
+    # New language features - handle them before string splitting
+    
+    # 1. Arrow functions with implicit returns: x => x * 2 -> lambda x: x * 2
+    result = re.sub(r'(\w+(?:\s*,\s*\w+)*)\s*=>\s*([^;,\)\]\}]+)', r'lambda \1: \2', result)
+    result = re.sub(r'\(([^)]*)\)\s*=>\s*([^;,\)\]\}]+)', r'lambda \1: \2', result)
+    
+    # 2. Ternary operator: condition ? value1 : value2 -> value1 if condition else value2
+    # Match specifically in assignment contexts
+    result = re.sub(r'=\s*([^?]+?)\s*\?\s*([^:]+?)\s*:\s*([^;,\)\]\}]+)', r'= (\2 if \1 else \3)', result)
+    
+    # 3. Pipe operator: value |> func -> func(value)
+    # Match specifically in assignment contexts, handle parentheses
+    result = re.sub(r'=\s*([^=|]+?)\s*\|\>\s*(\([^)]+\)|\w+)', r'= \2(\1)', result)
+    
+    # 4. Compound assignment operators
+    result = re.sub(r'(\w+)\s*\+=\s*([^;,\)\]\}]+)', r'\1 = \1 + \2', result)
+    result = re.sub(r'(\w+)\s*-=\s*([^;,\)\]\}]+)', r'\1 = \1 - \2', result)
+    result = re.sub(r'(\w+)\s*\*=\s*([^;,\)\]\}]+)', r'\1 = \1 * \2', result)
+    result = re.sub(r'(\w+)\s*\/=\s*([^;,\)\]\}]+)', r'\1 = \1 / \2', result)
+    result = re.sub(r'(\w+)\s*\%=\s*([^;,\)\]\}]+)', r'\1 = \1 % \2', result)
+    result = re.sub(r'(\w+)\s*\|\|=\s*([^;,\)\]\}]+)', r'\1 = \1 if \1 is not None else \2', result)
+    
+    # 5. Increment/decrement operators
+    result = re.sub(r'(\w+)\+\+', r'\1 = \1 + 1', result)
+    result = re.sub(r'(\w+)--', r'\1 = \1 - 1', result)
+    result = re.sub(r'\+\+(\w+)', r'\1 = \1 + 1', result)
+    result = re.sub(r'--(\w+)', r'\1 = \1 - 1', result)
+    
+    # Null coalescing: value ?? default -> value if value is not None else default
+    result = re.sub(r'(\w+(?:\([^)]*\))?)\s*\?\?\s*("(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|\w+(?:\([^)]*\))?)', r'(\1 if \1 is not None else \2)', result)
+    
+    # Optional chaining: obj?.prop -> (obj.prop if obj is not None else None)
+    # Handle method calls: obj?.method() -> (obj.method() if obj is not None else None)
+    result = re.sub(r'(\w+)\?\.(\w+\([^)]*\))', r'(\1.\2 if \1 is not None else None)', result)
+    # Handle property access: obj?.prop -> (obj.prop if obj is not None else None)
+    result = re.sub(r'(\w+)\?\.(\w+)', r'(\1.\2 if \1 is not None else None)', result)
+    
+    # Range expressions: 1..10 -> range(1, 11), 1..<10 -> range(1, 10)
+    result = re.sub(r'(\d+)\.\.(<?)(\d+)', lambda m: f'range({m.group(1)}, {m.group(3)})' if m.group(2) else f'range({m.group(1)}, {int(m.group(3)) + 1})', result)
+    
+    return result
 
 
 def _resolve_clyp_module_path(
@@ -397,15 +497,36 @@ def parse_clyp(
             i += 1
             continue
 
-        # braces -> keep as their own token with newline
+        # braces handling - only add newlines for block syntax, not inline objects/dictionaries
         if ch == "{":
+            # Look ahead to see if this is likely a dictionary/object literal or a code block
+            # Heuristics:
+            # 1. If we see : or " nearby, it's likely a dict
+            # 2. If we see = after the closing brace, it's likely destructuring
+            lookahead = src[i:i+100]  # Look ahead up to 100 chars
+            is_dict_like = ('"' in lookahead and ':' in lookahead) or ("'" in lookahead and ':' in lookahead)
+            # Check for destructuring pattern: { ... } =
+            closing_brace_pos = lookahead.find('}')
+            if closing_brace_pos != -1:
+                after_brace = lookahead[closing_brace_pos+1:].strip()
+                if after_brace.startswith('='):
+                    is_dict_like = True  # Treat destructuring as dict-like
             processed_chars.append("{")
-            processed_chars.append("\n")
+            if not is_dict_like:
+                processed_chars.append("\n")
             i += 1
             continue
         if ch == "}":
+            # Look behind to see if this closes a dictionary or destructuring
+            lookbehind = ''.join(processed_chars[-100:])  # Look back up to 100 chars
+            is_dict_like = ('"' in lookbehind and ':' in lookbehind) or ("'" in lookbehind and ':' in lookbehind)
+            # Check if this is part of destructuring by looking ahead for =
+            lookahead = src[i+1:i+20]
+            if lookahead.strip().startswith('='):
+                is_dict_like = True  # Treat destructuring as dict-like
             processed_chars.append("}")
-            processed_chars.append("\n")
+            if not is_dict_like:
+                processed_chars.append("\n")
             i += 1
             continue
 
@@ -577,6 +698,8 @@ def parse_clyp(
     py_line_num = python_code.count("\n") + 1
     in_class_block = False
     class_indentation_level: Optional[int] = None
+    in_enum_block = False
+    enum_indentation_level: Optional[int] = None
 
     def strip_trailing_semicolon_from_call(s: str) -> str:
         """
@@ -659,9 +782,18 @@ def parse_clyp(
             infile_str_indented += indentation_level * indentation_sign + add_comment.lstrip() + "\n"
             continue
 
-        # handle 'let ' declarations: let x = ... -> x = ...
+        # handle 'let ' and 'const ' declarations: let x = ... -> x = ..., const x = ... -> x = ... (with comment)
         if code_part.lstrip().startswith("let "):
             code_part = code_part.lstrip()[4:].lstrip()
+        elif code_part.lstrip().startswith("const "):
+            # Handle const declarations - add comment to indicate immutability
+            const_part = code_part.lstrip()[6:].lstrip()
+            # Find the variable name for the comment
+            var_match = re.match(r'^(\w+)', const_part)
+            if var_match:
+                var_name = var_match.group(1)
+                add_comment = f" # const {var_name}" + add_comment
+            code_part = const_part
 
         stripped_line = code_part.strip()
 
@@ -671,6 +803,9 @@ def parse_clyp(
             if in_class_block and (class_indentation_level is not None and indentation_level < class_indentation_level):
                 in_class_block = False
                 class_indentation_level = None
+            if in_enum_block and (enum_indentation_level is not None and indentation_level < enum_indentation_level):
+                in_enum_block = False
+                enum_indentation_level = None
             code_part = code_part.lstrip("}").lstrip()
             stripped_line = code_part.strip()
             if not stripped_line:
@@ -679,7 +814,91 @@ def parse_clyp(
                 py_line_num += 1
                 continue
 
-        # Type aliases: type UserId = int
+        # Destructuring assignment: { name, age } = user -> name, age = user['name'], user['age']
+        destructure_obj_match = re.match(r"^\{\s*([^}]+)\s*\}\s*=\s*(.+)$", stripped_line)
+        if destructure_obj_match:
+            keys = [k.strip() for k in destructure_obj_match.group(1).split(',')]
+            source = destructure_obj_match.group(2).strip()
+            assignments = ', '.join(keys) + ' = ' + ', '.join([f"{source}['{key}']" for key in keys])
+            infile_str_indented += indentation_sign * indentation_level + assignments + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Array destructuring: [first, second] = array -> first, second = array[0], array[1]
+        destructure_arr_match = re.match(r"^\[\s*([^\]]+)\s*\]\s*=\s*(.+)$", stripped_line)
+        if destructure_arr_match:
+            vars = [v.strip() for v in destructure_arr_match.group(1).split(',')]
+            source = destructure_arr_match.group(2).strip()
+            assignments = ', '.join(vars) + ' = ' + ', '.join([f"{source}[{i}]" for i in range(len(vars))])
+            infile_str_indented += indentation_sign * indentation_level + assignments + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Array comprehensions: [x * 2 for x in items if x > 0] -> [x * 2 for x in items if x > 0]
+        comprehension_match = re.match(r"^(.+)\s*=\s*\[([^[\]]+)\s+for\s+(\w+)\s+in\s+([^[\]]+?)(?:\s+if\s+([^[\]]+))?\]", stripped_line)
+        if comprehension_match:
+            var_name = comprehension_match.group(1).strip()
+            expr = comprehension_match.group(2).strip()
+            loop_var = comprehension_match.group(3).strip()
+            iterable = comprehension_match.group(4).strip()
+            condition = comprehension_match.group(5)
+            
+            if condition:
+                result_line = f"{var_name} = [{expr} for {loop_var} in {iterable} if {condition.strip()}]"
+            else:
+                result_line = f"{var_name} = [{expr} for {loop_var} in {iterable}]"
+            
+            infile_str_indented += indentation_sign * indentation_level + result_line + add_comment + "\n"
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Static method declarations: static function methodName -> @staticmethod
+        static_func_match = re.match(r"^static\s+function\s+([a-zA-Z_][\w]*)\s*\(([^)]*)\)(?:\s*returns\s+([a-zA-Z_][\w]*))?\s*\{?", stripped_line)
+        if static_func_match:
+            func_name = static_func_match.group(1)
+            params = static_func_match.group(2).strip()
+            return_type = static_func_match.group(3)
+            
+            # Convert Clyp parameters to Python parameters
+            python_params = convert_clyp_params_to_python(params) if params else ""
+            
+            infile_str_indented += indentation_sign * indentation_level + "@staticmethod\n"
+            if return_type:
+                infile_str_indented += indentation_sign * indentation_level + f"def {func_name}({python_params}) -> {return_type}:" + add_comment + "\n"
+            else:
+                infile_str_indented += indentation_sign * indentation_level + f"def {func_name}({python_params}):" + add_comment + "\n"
+            
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Async function declarations: async function name -> async def name
+        async_func_match = re.match(r"^async\s+function\s+([a-zA-Z_][\w]*)\s*\(([^)]*)\)(?:\s*returns\s+([a-zA-Z_][\w]*))?\s*\{?", stripped_line)
+        if async_func_match:
+            func_name = async_func_match.group(1)
+            params = async_func_match.group(2).strip()
+            return_type = async_func_match.group(3)
+            
+            # Convert Clyp parameters to Python parameters
+            python_params = convert_clyp_params_to_python(params) if params else ""
+            
+            if return_type:
+                infile_str_indented += indentation_sign * indentation_level + f"async def {func_name}({python_params}) -> {return_type}:" + add_comment + "\n"
+            else:
+                infile_str_indented += indentation_sign * indentation_level + f"async def {func_name}({python_params}):" + add_comment + "\n"
+            
+            indentation_level += 1
+            line_map[py_line_num] = clyp_line_num
+            py_line_num += 1
+            continue
+
+        # Await expressions: await someAsyncFunction() -> await someAsyncFunction()
+        if "await " in stripped_line:
+            stripped_line = re.sub(r'\bawait\s+', 'await ', stripped_line)
         type_alias_match = re.match(r"^type\s+([a-zA-Z_][\w]*)\s*=\s*(.+);?", stripped_line)
         if type_alias_match:
             alias_name = type_alias_match.group(1)
@@ -711,9 +930,28 @@ def parse_clyp(
             enum_name = enum_start_match.group(1)
             infile_str_indented += indentation_sign * indentation_level + f"from enum import Enum" + "\n"
             infile_str_indented += indentation_sign * indentation_level + f"class {enum_name}(Enum):" + add_comment + "\n"
+            in_enum_block = True
+            enum_indentation_level = indentation_level + 1
             indentation_level += 1
             line_map[py_line_num] = clyp_line_num
             py_line_num += 1
+            continue
+
+        # Handle enum values when inside an enum block
+        if in_enum_block:
+            # Remove closing brace if present and extract values
+            values_line = stripped_line.rstrip('}').strip()
+            if values_line:
+                enum_values = [v.strip() for v in values_line.split(',') if v.strip()]
+                for i, value in enumerate(enum_values):
+                    infile_str_indented += indentation_sign * indentation_level + f"{value} = {i + 1}\n"
+                line_map[py_line_num] = clyp_line_num
+                py_line_num += 1
+            # If line ended with }, we're done with the enum
+            if stripped_line.rstrip().endswith('}'):
+                in_enum_block = False
+                enum_indentation_level = None
+                indentation_level -= 1
             continue
 
         # class declaration
@@ -792,8 +1030,18 @@ def parse_clyp(
             
         catch_pattern = re.match(r"^catch\s*\(([^)]*)\)\s*\{?", stripped_line)
         if catch_pattern:
-            exception_type = catch_pattern.group(1).strip() or "Exception"
-            infile_str_indented += indentation_sign * indentation_level + f"except {exception_type}:" + add_comment + "\n"
+            exception_spec = catch_pattern.group(1).strip()
+            if exception_spec:
+                # Handle "Exception e" format
+                parts = exception_spec.split()
+                if len(parts) == 2:
+                    exception_type, var_name = parts
+                    infile_str_indented += indentation_sign * indentation_level + f"except {exception_type} as {var_name}:" + add_comment + "\n"
+                else:
+                    # Just exception type or variable name
+                    infile_str_indented += indentation_sign * indentation_level + f"except {exception_spec}:" + add_comment + "\n"
+            else:
+                infile_str_indented += indentation_sign * indentation_level + "except Exception:" + add_comment + "\n"
             indentation_level += 1
             line_map[py_line_num] = clyp_line_num
             py_line_num += 1
